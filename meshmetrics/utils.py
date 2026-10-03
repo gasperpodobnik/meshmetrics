@@ -45,19 +45,53 @@ def to_sitk(img: Union[str, Path, sitk.Image]) -> sitk.Image:
     return img
 
 
+_POLYDATA_READERS = {
+    ".obj": vtk.vtkOBJReader,
+    ".vtk": vtk.vtkPolyDataReader,
+    ".stl": vtk.vtkSTLReader,
+    ".vtp": vtk.vtkXMLPolyDataReader,
+}
+_POLYDATA_WRITERS = {
+    ".obj": vtk.vtkOBJWriter,
+    ".vtk": vtk.vtkPolyDataWriter,
+    ".stl": vtk.vtkSTLWriter,
+    ".vtp": vtk.vtkXMLPolyDataWriter,
+}
+
+
+def _polydata_io_class(pth: Path, classes: dict):
+    suffix = pth.suffix.lower()
+    if suffix not in classes:
+        raise ValueError(
+            f"Unsupported mesh file extension '{suffix}', supported: {', '.join(classes)}"
+        )
+    return classes[suffix]
+
+
 def vtk_read_polydata(pth: Union[str, Path]) -> vtk.vtkPolyData:
-    reader = vtk.vtkOBJReader()
+    """Read a mesh from a .obj, .vtk (legacy polydata), .stl or .vtp file."""
+    pth = Path(pth)
+    reader_cls = _polydata_io_class(pth, _POLYDATA_READERS)
+    if not pth.is_file():
+        raise FileNotFoundError(pth)
+
+    reader = reader_cls()
     reader.SetFileName(str(pth))
+    if isinstance(reader, vtk.vtkPolyDataReader) and not reader.IsFilePolyData():
+        raise ValueError(f"{pth} is not a legacy VTK polydata file")
     reader.Update()
-    polydata = reader.GetOutput()
-    return polydata
+    return reader.GetOutput()
 
 
-def vtk_write_polydata(vtk_polydata: vtk.vtkPolyData, dst_pth: Union[str, Path]):
-    writer = vtk.vtkOBJWriter()
+def vtk_write_polydata(vtk_polydata: vtk.vtkPolyData, pth: Union[str, Path]):
+    """Write a mesh to a .obj, .vtk (legacy polydata), .stl or .vtp file."""
+    assert isinstance(vtk_polydata, vtk.vtkPolyData), "Unknown mesh type"
+    pth = Path(pth)
+    writer = _polydata_io_class(pth, _POLYDATA_WRITERS)()
     writer.SetInputData(vtk_polydata)
-    writer.SetFileName(str(dst_pth))
-    writer.Write()
+    writer.SetFileName(str(pth))
+    if not writer.Write():
+        raise IOError(f"Failed to write mesh to {pth}")
 
 
 def to_vtk(src_mesh: Union[str, Path, vtk.vtkPolyData]) -> vtk.vtkPolyData:
@@ -190,6 +224,38 @@ def vtk_meshing(src_img: Union[str, Path, sitk.Image]):
     return mesh
 
 
+def vtk_2D_mask_surface(mask_sitk: sitk.Image) -> vtk.vtkPolyData:
+    """Open 3D surface (vertical walls) of a 2D mask's SurfaceNets contour.
+
+    `vtk.vtkImplicitPolyDataDistance` needs a surface, so the 2D contour (in the z=0 plane)
+    is extruded along z from -0.5 to 0.5. For points in the z=0 plane, distances to this
+    surface equal the in-plane distances to the contour.
+    """
+    contour = vtk_2D_meshing(mask_sitk, pad=False)
+    if contour.GetNumberOfCells() == 0:
+        return vtk.vtkPolyData()
+
+    shift = vtk.vtkTransform()
+    shift.Translate(0.0, 0.0, -0.5)
+    shift_filter = vtk.vtkTransformFilter()
+    shift_filter.SetInputData(contour)
+    shift_filter.SetTransform(shift)
+
+    extrude = vtk.vtkLinearExtrusionFilter()
+    extrude.SetInputConnection(shift_filter.GetOutputPort())
+    extrude.SetExtrusionTypeToVectorExtrusion()
+    extrude.SetVector(0.0, 0.0, 1.0)
+    extrude.SetScaleFactor(1.0)
+    extrude.CappingOff()
+
+    triangulate = vtk.vtkTriangleFilter()
+    triangulate.SetInputConnection(extrude.GetOutputPort())
+    triangulate.PassLinesOff()
+    triangulate.PassVertsOff()
+    triangulate.Update()
+    return triangulate.GetOutput()
+
+
 def vtk_2D_centroid2surface_dist_length(
     pts_contour: vtk.vtkPolyData,
     surface_mesh: vtk.vtkPolyData,
@@ -246,9 +312,8 @@ def vtk_measurements_2D(
     line segments. Distances and the corresponding segment lengths are then sorted.
 
     Note:
-        Since `vtk.vtkImplicitPolyDataDistance` requires a 3D `vtkPolyData`, the input
-        2D `sitk.Image` contours are lifted into 3D by adding a singleton axis and then
-        meshed into open 3D surfaces.
+        Since `vtk.vtkImplicitPolyDataDistance` requires a surface, the contours of the
+        2D masks are extruded along z into open surfaces (see `vtk_2D_mask_surface`).
 
     Args:
         ref_contour (vtk.vtkPolyData): Contour created from reference segmentation.
@@ -261,10 +326,8 @@ def vtk_measurements_2D(
         from ref to pred mesh and ref segment lengths, and vice-versa
     """
     # fmt: off
-    # lift 2D contours into 3D by adding a singleton axis and mesh into open surfaces
-    ref_sitk_3D, pred_sitk_3D = sitk_add_axis_to_end(ref_sitk), sitk_add_axis_to_end(pred_sitk)
-    # note that the surfaces should be created using surface nets
-    ref_surface, pred_surface = vtk_3D_meshing(ref_sitk_3D, pad=False), vtk_3D_meshing(pred_sitk_3D, pad=False)
+    # extrude 2D contours of the masks into open surfaces
+    ref_surface, pred_surface = vtk_2D_mask_surface(ref_sitk), vtk_2D_mask_surface(pred_sitk)
 
     # compute distances between contour centroids and opposing surface
     dists_ref2pred, segment_lengths_ref = vtk_2D_centroid2surface_dist_length(ref_contour, pred_surface)
@@ -279,11 +342,18 @@ def vtk_measurements_2D(
 
 
 def vtk_compute_cell_sizes(mesh: vtk.vtkPolyData) -> np.ndarray:
-    N_faces = mesh.GetNumberOfCells()
-    cell_sizes = np.zeros(N_faces)
-    for enum in range(N_faces):
-        cell_sizes[enum] = mesh.GetCell(enum).ComputeArea()
-    return cell_sizes
+    """Area of each (polygonal) cell of the mesh."""
+    if mesh.GetNumberOfCells() == 0:
+        return np.zeros(0)
+    cell_size = vtk.vtkCellSizeFilter()
+    cell_size.SetInputData(mesh)
+    cell_size.ComputeAreaOn()
+    cell_size.ComputeLengthOff()
+    cell_size.ComputeVolumeOff()
+    cell_size.ComputeVertexCountOff()
+    cell_size.ComputeSumOff()
+    cell_size.Update()
+    return vtk_to_numpy(cell_size.GetOutput().GetCellData().GetArray("Area")).astype(float)
 
 
 def vtk_measurements_3D(
@@ -332,13 +402,127 @@ def vtk_measurements_3D(
 def index2world(
     inds: np.ndarray, spacing: np.ndarray, origin: np.ndarray, direction: np.ndarray
 ) -> np.ndarray:
-    return (inds * spacing + origin) @ direction.T
+    return origin + (inds * spacing) @ direction.T
 
 
-def compute_distance_field(pts_np: np.ndarray, mesh_vtk: vtk.vtkPolyData):
+def compute_distance_field(pts_np: np.ndarray, mesh_vtk: vtk.vtkPolyData) -> np.ndarray:
+    """Unsigned distance from each point (N x 3) to the mesh surface."""
+    if len(pts_np) == 0:
+        return np.zeros(0)
     vtk_p2s_dist = vtk.vtkImplicitPolyDataDistance()
     vtk_p2s_dist.SetInput(mesh_vtk)
-    return np.array([abs(vtk_p2s_dist.FunctionValue(pt)) for pt in pts_np])
+    dists = vtk.vtkDoubleArray()
+    vtk_p2s_dist.FunctionValue(
+        numpy_to_vtk(np.ascontiguousarray(pts_np, dtype=float), deep=True), dists
+    )
+    return np.abs(vtk_to_numpy(dists))
+
+
+def mesh_distance_lower_bound(
+    surface: vtk.vtkPolyData, meta_sitk: sitk.Image, max_dist: float
+) -> np.ndarray:
+    """Lower bound on the distance from each voxel centre of `meta_sitk` to `surface`.
+
+    Valid for any surface. The surface is subdivided until all triangle edges are at most
+    ``L`` (the smallest voxel spacing), so every surface point is within ``L`` of a mesh
+    vertex. Each vertex is snapped to its nearest voxel centre (moving it by at most half a
+    voxel diagonal), and a Euclidean distance transform gives the distance from every
+    voxel centre to the nearest snapped vertex. Hence::
+
+        exact distance >= EDT - voxel_diagonal / 2 - L
+
+    Surface points farther than ``max_dist`` from the image grid are ignored, so the bound
+    is only meaningful for deciding whether a distance is below ``max_dist``. For 2D images,
+    the bound refers to in-plane (x, y) distances. Returned in ``sitk2np`` axis order.
+    """
+    ndim = meta_sitk.GetDimension()
+    spacing = np.array(meta_sitk.GetSpacing())
+    origin = np.array(meta_sitk.GetOrigin())
+    direction = np.array(meta_sitk.GetDirection()).reshape(ndim, ndim)
+    size = np.array(meta_sitk.GetSize())
+    max_edge = spacing.min()
+    margin = np.linalg.norm(spacing) / 2 + max_edge
+
+    if surface.GetNumberOfCells() == 0:
+        return np.full(size, np.inf)
+
+    triangulate = vtk.vtkTriangleFilter()
+    triangulate.SetInputData(surface)
+    triangulate.PassLinesOff()
+    triangulate.PassVertsOff()
+    subdivide = vtk.vtkAdaptiveSubdivisionFilter()
+    subdivide.SetInputConnection(triangulate.GetOutputPort())
+    subdivide.SetMaximumEdgeLength(max_edge)
+    subdivide.SetMaximumTriangleArea(np.inf)
+    subdivide.SetMaximumNumberOfPasses(1000)
+    subdivide.Update()
+    pts = vtk_to_numpy(subdivide.GetOutput().GetPoints().GetData())[:, :ndim]
+
+    # world -> nearest voxel index on a grid padded by `pad` voxels; vertices outside the
+    # padded grid are farther than max_dist from every voxel centre of the image
+    pad = int(np.ceil(max_dist / spacing.min())) + 1
+    idx = np.rint(((pts - origin) @ direction) / spacing).astype(np.int64) + pad
+    padded_size = size + 2 * pad
+    idx = idx[np.all((idx >= 0) & (idx < padded_size), axis=1)]
+    if len(idx) == 0:
+        return np.full(size, np.inf)
+
+    marked = np.zeros(padded_size[::-1], np.uint8)  # SimpleITK array order
+    marked[tuple(idx[:, ::-1].T)] = 1
+    marked_sitk = sitk.GetImageFromArray(marked)
+    marked_sitk.SetSpacing(spacing.tolist())
+    edt = sitk.SignedMaurerDistanceMap(
+        marked_sitk, insideIsPositive=False, squaredDistance=False, useImageSpacing=True
+    )
+    edt_np = np.maximum(sitk2np(edt), 0)[(slice(pad, -pad),) * ndim]
+    return edt_np - margin
+
+
+def vtk_mask_distance_field(
+    mask_sitk: sitk.Image,
+    mesh_vtk: vtk.vtkPolyData = None,
+    max_dist: float = None,
+) -> np.ndarray:
+    """Distance from each foreground voxel centre of a binary mask to its surface.
+
+    Args:
+        mask_sitk: Binary mask.
+        mesh_vtk: Surface of the mask (3D only). If None, or for 2D masks, the surface is
+            created from the mask with SurfaceNets.
+        max_dist: If given, exact distances are only computed for voxels that may be closer
+            than ``max_dist`` to the surface (see ``mesh_distance_lower_bound``); the
+            remaining foreground voxels are set to ``np.inf``.
+
+    Returns:
+        np.ndarray (``sitk2np`` axis order): distances for foreground voxels, 0 for background.
+    """
+    ndim = mask_sitk.GetDimension()
+    mask_np = sitk2np(mask_sitk) > 0
+
+    if ndim == 2:
+        # distances to the contour, measured in the z=0 plane of an extruded open surface
+        surface = vtk_2D_mask_surface(mask_sitk)
+    elif mesh_vtk is None:
+        surface = vtk_meshing(mask_sitk)
+    else:
+        surface = mesh_vtk
+
+    candidates = mask_np.copy()
+    if max_dist is not None and np.isfinite(max_dist):
+        candidates &= mesh_distance_lower_bound(surface, mask_sitk, max_dist) < max_dist
+
+    pts = index2world(
+        np.argwhere(candidates),
+        np.array(mask_sitk.GetSpacing()),
+        np.array(mask_sitk.GetOrigin()),
+        np.array(mask_sitk.GetDirection()).reshape(ndim, ndim),
+    )
+    if ndim == 2:
+        pts = np.concatenate([pts, np.zeros((len(pts), 1))], axis=1)
+
+    dist_field = np.where(mask_np, np.inf, 0).astype(np.float32)
+    dist_field[candidates] = compute_distance_field(pts, surface)
+    return dist_field
 
 
 def vtk_distance_field(
@@ -377,46 +561,9 @@ def vtk_distance_field(
               predicted segmentation relative to the predicted surface.
     """
 
-    n_dim = ref_sitk.GetDimension()
-    spacing = np.array(ref_sitk.GetSpacing())
-    origin = np.array(ref_sitk.GetOrigin())
-    direction = np.array(ref_sitk.GetDirection()).reshape(n_dim, n_dim)
-
-    # get foreground pixel/voxel coordinates in world space
-    ref_np, pred_np = sitk2np(ref_sitk), sitk2np(pred_sitk)
-    ref_world = index2world(
-        np.stack(np.nonzero(ref_np), axis=1), spacing, origin, direction
-    )
-    pred_world = index2world(
-        np.stack(np.nonzero(pred_np), axis=1), spacing, origin, direction
-    )
-
-    if n_dim == 2:
-        # add z axis with 0 values
-        ref_world = np.concatenate(
-            [ref_world, np.zeros((ref_world.shape[0], 1))], axis=1
-        )
-        pred_world = np.concatenate(
-            [pred_world, np.zeros((pred_world.shape[0], 1))], axis=1
-        )
-
-        ref_sitk_3D, pred_sitk_3D = sitk_add_axis_to_end(
-            ref_sitk
-        ), sitk_add_axis_to_end(pred_sitk)
-        ref_surface, pred_surface = vtk_3D_meshing(
-            ref_sitk_3D, pad=False
-        ), vtk_3D_meshing(pred_sitk_3D, pad=False)
-    else:
-        ref_surface, pred_surface = ref_mesh, pred_mesh
-
-    # initialize distance fields with zeros, then compute distances only for foreground pixels/voxels
-    ref_dist_field, pred_dist_field = np.copy(ref_np).astype(np.float32), np.copy(
-        pred_np
-    ).astype(np.float32)
-    ref_dist_field[ref_dist_field > 0] = compute_distance_field(ref_world, ref_surface)
-    pred_dist_field[pred_dist_field > 0] = compute_distance_field(
-        pred_world, pred_surface
-    )
+    # 2D: surfaces are always created from the masks (meshes are unused)
+    ref_dist_field = vtk_mask_distance_field(ref_sitk, ref_mesh if ref_sitk.GetDimension() == 3 else None)
+    pred_dist_field = vtk_mask_distance_field(pred_sitk, pred_mesh if pred_sitk.GetDimension() == 3 else None)
     return ref_dist_field, pred_dist_field
 
 
@@ -439,8 +586,8 @@ def vtk_voxelizer(mesh_vtk: vtk.vtkPolyData, meta_sitk: sitk.Image):
     assert isinstance(mesh_vtk, vtk.vtkPolyData), "Mesh must be vtkPolyData"
     assert isinstance(meta_sitk, sitk.Image), "Segmentation must be SimpleITK image"
 
-    # check for empty mesh or empty image
-    if mesh_vtk is None or np.prod(meta_sitk.GetSize()) == 0:
+    # check for empty image
+    if np.prod(meta_sitk.GetSize()) == 0:
         return meta_sitk
 
     ndim = meta_sitk.GetDimension()
@@ -469,7 +616,7 @@ def vtk_voxelizer(mesh_vtk: vtk.vtkPolyData, meta_sitk: sitk.Image):
         vtk_transform.Inverse()
         
         # Transform the mesh
-        transform_filter = vtk.vtkTransformPolyDataFilter()
+        transform_filter = vtk.vtkTransformFilter()
         transform_filter.SetInputData(mesh_vtk)
         transform_filter.SetTransform(vtk_transform)
         transform_filter.Update()
@@ -521,6 +668,20 @@ def vtk_voxelizer(mesh_vtk: vtk.vtkPolyData, meta_sitk: sitk.Image):
     voxelized_sitk.SetDirection(meta_sitk.GetDirection())
     
     return voxelized_sitk
+
+def vtk_points_outside_image(mesh_vtk: vtk.vtkPolyData, meta_sitk: sitk.Image) -> bool:
+    """Check whether any mesh point lies outside the image grid (incl. half-voxel border)."""
+    if mesh_vtk.GetNumberOfPoints() == 0:
+        return False
+    ndim = meta_sitk.GetDimension()
+    pts = vtk_to_numpy(mesh_vtk.GetPoints().GetData())[:, :ndim]
+    direction = np.array(meta_sitk.GetDirection()).reshape(ndim, ndim)
+    origin, spacing = np.array(meta_sitk.GetOrigin()), np.array(meta_sitk.GetSpacing())
+    # world -> continuous index (direction is orthonormal)
+    idx = ((pts - origin) @ direction) / spacing
+    size = np.array(meta_sitk.GetSize())
+    return bool(np.any(idx < -0.5) or np.any(idx > size - 0.5))
+
 
 def get_mesh_bounds(mesh: vtk.vtkPolyData) -> np.ndarray:
     bounds = np.array(mesh.GetBounds())
@@ -631,15 +792,6 @@ def create_synthetic_examples_2d(
     return vtk_mesh1, vtk_mesh2, sitk_mask1, sitk_mask2
 
 
-def vtk_write_polydata(vtk_polydata: vtk.vtkPolyData, pth: Union[str, Path]):
-    assert isinstance(vtk_polydata, vtk.vtkPolyData), "Unknown mesh type"
-
-    writer = vtk.vtkOBJWriter()
-    writer.SetInputData(vtk_polydata)
-    writer.SetFileName(str(pth))
-    writer.Write()
-
-
 # ------------------------------
 def trimesh_to_vtk(mesh: "trimesh.Trimesh") -> vtk.vtkPolyData:
     """
@@ -675,7 +827,7 @@ def trimesh_to_vtk(mesh: "trimesh.Trimesh") -> vtk.vtkPolyData:
         ).ravel()
         vtk_faces = numpy_to_vtkIdTypeArray(faces_flat, deep=True)
         cells = vtk.vtkCellArray()
-        cells.SetCells(faces.shape[0], vtk_faces)
+        cells.ImportLegacyFormat(vtk_faces)
         polydata.SetPolys(cells)
     else:
         # If no faces, treat as a set of points (use vertices only)
@@ -713,23 +865,27 @@ def meshio_to_vtk(mesh: "meshio.Mesh") -> vtk.vtkPolyData:
     polydata = vtk.vtkPolyData()
     polydata.SetPoints(vtk_points)
 
-    # Find cells that can be treated as polygons/triangles
-    # mesh.cells is a list of (cell_type, array_of_indices)
-    polys = []
-    for cell_block in mesh.cells:
-        cell_type, data = cell_block.type, cell_block.data
-        if cell_type in ("triangle", "quad", "polygon"):
-            polys.append(data)
-    if polys:
-        polys = np.vstack(polys)
-        faces_flat = np.hstack(
-            [np.full((polys.shape[0], 1), polys.shape[1], dtype=np.int64), polys]
-        ).ravel()
-        vtk_faces = numpy_to_vtkIdTypeArray(faces_flat, deep=True)
+    # Collect polygon (3D surfaces) and line (2D contours) cells.
+    # mesh.cells is a list of cell blocks; blocks may have different cell sizes
+    # (e.g. triangles and quads), so each block is flattened separately.
+    def to_vtk_cells(blocks):
+        flat = [
+            np.hstack(
+                [np.full((len(b), 1), b.shape[1], dtype=np.int64), b.astype(np.int64)]
+            ).ravel()
+            for b in blocks
+        ]
         cells = vtk.vtkCellArray()
-        cells.SetCells(polys.shape[0], vtk_faces)
-        polydata.SetPolys(cells)
-    else:
+        cells.ImportLegacyFormat(numpy_to_vtkIdTypeArray(np.concatenate(flat), deep=True))
+        return cells
+
+    polys = [b.data for b in mesh.cells if b.type in ("triangle", "quad", "polygon")]
+    lines = [b.data for b in mesh.cells if b.type == "line"]
+    if polys:
+        polydata.SetPolys(to_vtk_cells(polys))
+    if lines:
+        polydata.SetLines(to_vtk_cells(lines))
+    if not polys and not lines:
         # fallback: only vertices
         polydata.SetVerts(vtk.vtkCellArray())
 
