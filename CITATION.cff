@@ -1,0 +1,35 @@
+cff-version: 1.2.0
+message: "If you use MeshMetrics in your work, please cite the paper below."
+title: "MeshMetrics: A Precise Implementation of Distance-Based Image Segmentation Metrics"
+type: software
+authors:
+  - given-names: Gašper
+    family-names: Podobnik
+    affiliation: "University of Ljubljana, Faculty of Electrical Engineering"
+    orcid: "https://orcid.org/0000-0002-4142-3304"
+  - given-names: Tomaž
+    family-names: Vrtovec
+    affiliation: "University of Ljubljana, Faculty of Electrical Engineering"
+    orcid: "https://orcid.org/0000-0002-6625-0307"
+repository-code: "https://github.com/gasperpodobnik/meshmetrics"
+url: "https://pypi.org/project/pymeshmetrics/"
+license: Apache-2.0
+keywords:
+  - image segmentation
+  - evaluation metrics
+  - Hausdorff distance
+  - surface distance
+  - mesh
+preferred-citation:
+  type: article
+  title: "MeshMetrics: A Precise Implementation of Distance-Based Image Segmentation Metrics"
+  authors:
+    - given-names: Gašper
+      family-names: Podobnik
+      orcid: "https://orcid.org/0000-0002-4142-3304"
+    - given-names: Tomaž
+      family-names: Vrtovec
+      orcid: "https://orcid.org/0000-0002-6625-0307"
+  journal: "arXiv preprint arXiv:2509.05670"
+  year: 2025
+  doi: "10.48550/arXiv.2509.05670"

@@ -1119,7 +1119,6 @@ dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "simpleitk" },
-    { name = "simpleitkutilities" },
     { name = "vtk" },
 ]
 
@@ -1149,10 +1148,9 @@ requires-dist = [
     { name = "meshio", marker = "extra == 'meshio'" },
     { name = "numpy" },
     { name = "simpleitk" },
-    { name = "simpleitkutilities" },
     { name = "trimesh", marker = "extra == 'all'" },
     { name = "trimesh", marker = "extra == 'trimesh'" },
-    { name = "vtk", specifier = ">=9.1" },
+    { name = "vtk", specifier = ">=9.2" },
 ]
 provides-extras = ["trimesh", "meshio", "all"]
 
@@ -1441,21 +1439,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/23/37/80222d4c16355664abc1d5c0105a2ee061a4f05a35dc619f983943c0766b/simpleitk-2.5.6-cp314-cp314t-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:22b825c609fe5ca114c8acc149a26a94a01bd62e8c9e685f362d5f880e237269", size = 47951032, upload-time = "2026-07-30T16:52:42.151Z" },
     { url = "https://files.pythonhosted.org/packages/9f/22/8944f38bf222a63b74605aa9f0e2fb1c807155e5d71aee749383428b2e52/simpleitk-2.5.6-cp314-cp314t-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:baf0d5731b8918efce8084e5e28e403aab116e1081b77822123bb55e0841e5e7", size = 52645744, upload-time = "2026-07-30T16:52:50.027Z" },
     { url = "https://files.pythonhosted.org/packages/21/01/d663e669d8df9d970f3349c29796c7667337daf19c4e69ca99d5ab5518a3/simpleitk-2.5.6-cp314-cp314t-win_amd64.whl", hash = "sha256:5e731a91cd1376e5a4533395cf2b1ae9fb2a8fa1fbf7f396ab49d3223fc464fd", size = 19518293, upload-time = "2026-07-30T16:52:53.405Z" },
-]
-
-[[package]]
-name = "simpleitkutilities"
-version = "0.3.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
-    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "simpleitk" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/b5/aa/11493b0dfaf561b099b14daa2d061c399ca72143c8b7c72b486098a469de/SimpleITKUtilities-0.3.0.tar.gz", hash = "sha256:9ff4db679810bf228a3ca7416bbb238bf297fdf3260c33b5defaaf828547921f", size = 24732, upload-time = "2024-02-13T20:23:11.552Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/47/bf/a923bf858488c238950523261aa54dcc9c2edff8f48e22b3ef9732abcf65/SimpleITKUtilities-0.3.0-py3-none-any.whl", hash = "sha256:76db995dc29987c4f0fdd20359ad4940ac1bc91664d5d74f94b231181736d255", size = 22913, upload-time = "2024-02-13T20:23:09.813Z" },
 ]
 
 [[package]]

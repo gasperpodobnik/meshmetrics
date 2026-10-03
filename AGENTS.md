@@ -57,7 +57,7 @@ uv run pytest          # full test suite (about 1 min)
 - **BIoU** is computed on the grid, with exact distances only near the boundary (a provable
   lower bound selects the voxels). It raises `ValueError` when `tau` is too small for any
   boundary voxel.
-- Support Python ≥ 3.10 and VTK ≥ 9.1. VTK behaviour changes between versions, so do not rely
+- Support Python ≥ 3.10 and VTK ≥ 9.2. VTK behaviour changes between versions, so do not rely
   on version-specific filters without testing them.
 
 ## Releases

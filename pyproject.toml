@@ -13,8 +13,7 @@ requires-python = ">=3.10"
 dependencies = [
     "numpy",
     "SimpleITK",
-    "SimpleITKUtilities",
-    "vtk>=9.1",  # 9.0 uses np.bool, removed in numpy 1.24
+    "vtk>=9.2",  # oldest VTK with Python 3.10 wheels (9.2.2)
 ]
 
 [project.optional-dependencies]
@@ -47,7 +46,3 @@ include = ["meshmetrics", "MeshMetrics.py", "README.md", "LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-filterwarnings = [
-    # numpy>=2.5 deprecation inside SimpleITKUtilities' vtk2sitk
-    "ignore:Setting the shape on a NumPy array:DeprecationWarning",
-]
