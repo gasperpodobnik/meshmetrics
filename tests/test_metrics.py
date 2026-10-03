@@ -265,3 +265,26 @@ def test_compute_metrics_errors_and_empty():
         compute_metrics(to_image(A), to_image(B), metrics=["biou"])
     res = compute_metrics(to_image(A), to_image(np.zeros_like(B)), taus=[1.0], verbose=False)
     assert res["pred_is_empty"] and res["HD_100"] == np.inf and res["NSD_1.0"] == 0.0
+
+
+@pytest.mark.parametrize("ndim", [2, 3])
+@pytest.mark.parametrize("touch", ["inside", "one_edge", "corner"])
+def test_identical_masks_touching_image_border(ndim, touch):
+    """Identical masks must give perfect scores, also when they touch the image border."""
+    a = np.zeros((20,) * ndim, np.uint8)
+    if touch == "inside":
+        a[(slice(5, 15),) * ndim] = 1
+    elif touch == "one_edge":
+        a[(slice(0, 12),) + (slice(5, 15),) * (ndim - 1)] = 1
+    else:
+        a[(slice(0, 12),) * ndim] = 1
+    img = sitk.GetImageFromArray(a)
+    img.SetSpacing([0.8, 1.3, 1.1][:ndim])
+    m = DistanceMetrics()
+    m.set_input(img, img)
+    assert m.hd() == pytest.approx(0, abs=1e-5)  # float32 mesh points
+    assert m.masd() == pytest.approx(0, abs=1e-5)  # float32 mesh points
+    assert m.assd() == pytest.approx(0, abs=1e-5)  # float32 mesh points
+    assert m.nsd(1.0) == pytest.approx(1.0)
+    assert m.biou(1.0) == pytest.approx(1.0)
+    assert m.dsc() == pytest.approx(1.0)

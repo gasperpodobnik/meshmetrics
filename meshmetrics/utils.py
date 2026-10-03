@@ -6,7 +6,6 @@ import SimpleITK as sitk
 import vtk
 
 from vtk.util.numpy_support import vtk_to_numpy, numpy_to_vtkIdTypeArray, numpy_to_vtk
-from SimpleITK.utilities.vtk import vtk2sitk
 
 
 def np2sitk(img_np: np.ndarray, swapaxes=True) -> sitk.Image:
@@ -243,9 +242,10 @@ def vtk_2D_mask_surface(mask_sitk: sitk.Image) -> vtk.vtkPolyData:
 
     `vtk.vtkImplicitPolyDataDistance` needs a surface, so the 2D contour (in the z=0 plane)
     is extruded along z from -0.5 to 0.5. For points in the z=0 plane, distances to this
-    surface equal the in-plane distances to the contour.
+    surface equal the in-plane distances to the contour. The contour is created with padding,
+    as in `vtk_meshing`, so masks touching the image border have a closed boundary (as in 3D).
     """
-    contour = vtk_2D_meshing(mask_sitk, pad=False)
+    contour = vtk_2D_meshing(mask_sitk, pad=True)
     if contour.GetNumberOfCells() == 0:
         return vtk.vtkPolyData()
 
@@ -274,34 +274,21 @@ def vtk_2D_centroid2surface_dist_length(
     pts_contour: vtk.vtkPolyData,
     surface_mesh: vtk.vtkPolyData,
 ) -> Tuple[np.ndarray, np.ndarray]:
-
+    """Distance from the centroid (midpoint) of each contour segment to `surface_mesh`, and
+    the length of each segment."""
     lines = pts_contour.GetLines()
-    lines.InitTraversal()
-    id_list = vtk.vtkIdList()
-
+    if lines.GetNumberOfCells() == 0:
+        return np.zeros(0), np.zeros(0)
     assert (
         lines.GetMaxCellSize() == 2
     ), "This function supports segment lines that have 2 points"
 
-    N = lines.GetNumberOfCells()
-    dists_pts2surface, segment_lengths = np.zeros(N), np.zeros(N)
+    pts = vtk_to_numpy(pts_contour.GetPoints().GetData()).astype(float)
+    segments = vtk_to_numpy(lines.GetConnectivityArray()).reshape(-1, 2)
+    pt0, pt1 = pts[segments[:, 0]], pts[segments[:, 1]]
 
-    vtk_p2s_dist = vtk.vtkImplicitPolyDataDistance()
-    vtk_p2s_dist.SetInput(surface_mesh)
-
-    # Iterate over each polyline in vtkPolyData
-    cnt = 0
-    while lines.GetNextCell(id_list):
-        point_id1 = id_list.GetId(0)
-        point_id2 = id_list.GetId(1)
-
-        # Get the coordinates of the two points
-        pt0 = np.array(pts_contour.GetPoint(point_id1))
-        pt1 = np.array(pts_contour.GetPoint(point_id2))
-
-        segment_lengths[cnt] = np.linalg.norm(pt0 - pt1)
-        dists_pts2surface[cnt] = abs(vtk_p2s_dist.FunctionValue((pt0 + pt1) / 2))
-        cnt += 1
+    segment_lengths = np.linalg.norm(pt1 - pt0, axis=1)
+    dists_pts2surface = compute_distance_field((pt0 + pt1) / 2, surface_mesh)
     return dists_pts2surface, segment_lengths
 
 
@@ -581,6 +568,17 @@ def vtk_distance_field(
     return ref_dist_field, pred_dist_field
 
 
+def _vtk_image_values_to_sitk(vtk_img: vtk.vtkImageData) -> sitk.Image:
+    """Copy the voxel values of a (3D) vtkImageData into a SimpleITK image (geometry not set).
+
+    VTK stores values with x varying fastest, which matches a SimpleITK array of shape
+    (nz, ny, nx).
+    """
+    nx, ny, nz = vtk_img.GetDimensions()
+    values = vtk_to_numpy(vtk_img.GetPointData().GetScalars())
+    return sitk.GetImageFromArray(values.reshape(nz, ny, nx))
+
+
 def vtk_voxelizer(
     mesh_vtk: vtk.vtkPolyData,
     meta_sitk: sitk.Image = None,
@@ -686,7 +684,7 @@ def vtk_voxelizer(
     stencil_to_image.Update()
     
     # Convert VTK image to SimpleITK
-    voxelized_sitk = vtk2sitk(stencil_to_image.GetOutput())
+    voxelized_sitk = _vtk_image_values_to_sitk(stencil_to_image.GetOutput())
     
     # For 2D cases, remove the added axial dimension
     if ndim == 2:
