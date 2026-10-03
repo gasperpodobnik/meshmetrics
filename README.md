@@ -30,10 +30,24 @@ This package requires `libxrender1` to be installed on your system. Install it v
 sudo apt update && sudo apt install -y libxrender1
 ```
 
-### Install `MeshMetrics` package
-Clone the repository and install the required dependencies along with the `MeshMetrics` package using pip:
+### Install `meshmetrics` package
+Add `meshmetrics` to your project with [uv](https://docs.astral.sh/uv/):
+```bash
+uv add git+https://github.com/gasperpodobnik/MeshMetrics.git
+```
+or install it with pip:
 ```bash
 pip install git+https://github.com/gasperpodobnik/MeshMetrics.git
+```
+Optional support for `trimesh` and `meshio` inputs is available via extras, e.g. `uv add "meshmetrics[all] @ git+https://github.com/gasperpodobnik/MeshMetrics.git"` (or `[trimesh]` / `[meshio]`).
+
+### Development
+Clone the repository and create the environment (including dev tools and all extras):
+```bash
+git clone https://github.com/gasperpodobnik/MeshMetrics.git
+cd MeshMetrics
+uv sync --all-extras
+uv run python -c "import meshmetrics"
 ```
 
 ## Usage
@@ -43,7 +57,7 @@ See [`examples.ipynb`](examples.ipynb) notebook for more examples.
 ```python
 from pathlib import Path
 import SimpleITK as sitk
-from MeshMetrics import DistanceMetrics
+from meshmetrics import DistanceMetrics
 
 data_dir = Path("data")
 # initialize DistanceMetrics object
