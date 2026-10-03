@@ -192,8 +192,7 @@ class DistanceMetrics:
         ## set other representations
         # create a meta image SimpleITK that encompasses both masks
         meta_sitk = vtk_meshes_bbox_sitk_image(
-            self.ref_vtk,
-            self.pred_vtk,
+            [self.ref_vtk, self.pred_vtk],
             spacing=self.spacing,
             tolerance=5 * np.array(self.spacing),
         )

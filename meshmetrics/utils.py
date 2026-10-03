@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Tuple, Union
+from typing import Sequence, Tuple, Union
 
 import numpy as np
 import SimpleITK as sitk
@@ -613,9 +613,7 @@ def vtk_voxelizer(
         spacing = np.asarray(spacing, dtype=float)
         assert len(spacing) in (2, 3), "spacing must have 2 or 3 values"
         assert np.all(spacing > 0), "spacing must be positive"
-        meta_sitk = vtk_meshes_bbox_sitk_image(
-            mesh_vtk, mesh_vtk, spacing=tuple(spacing), tolerance=2 * spacing
-        )
+        meta_sitk = vtk_meshes_bbox_sitk_image(mesh_vtk, spacing=tuple(spacing), tolerance=2 * spacing)
     assert isinstance(meta_sitk, sitk.Image), "meta_sitk must be a SimpleITK image"
 
     # check for empty image (e.g. an empty mesh with `spacing`)
@@ -715,36 +713,34 @@ def vtk_points_outside_image(mesh_vtk: vtk.vtkPolyData, meta_sitk: sitk.Image) -
     return bool(np.any(idx < -0.5) or np.any(idx > size - 0.5))
 
 
-def get_mesh_bounds(mesh: vtk.vtkPolyData) -> np.ndarray:
-    bounds = np.array(mesh.GetBounds())
-    if np.allclose(bounds, (1.0, -1.0, 1.0, -1.0, 1.0, -1.0)):
-        bounds[:] = np.nan
-    return bounds
-
-
 def vtk_meshes_bbox_sitk_image(
-    mesh1: vtk.vtkPolyData,
-    mesh2: vtk.vtkPolyData,
+    meshes: Union[vtk.vtkPolyData, Sequence[vtk.vtkPolyData]],
     spacing: tuple,
     tolerance: tuple | None = None,
 ) -> sitk.Image:
+    """Empty axis-aligned image (identity direction) covering the bounds of one or more meshes.
+
+    The first pixel/voxel centre lies at the minimum of the combined bounds minus `tolerance`,
+    and the grid extends to at least the maximum of the bounds plus `tolerance` minus one
+    pixel/voxel. Empty meshes are ignored; if all meshes are empty, an image of size 0 is
+    returned. For 2D (two `spacing` values), only the x and y bounds are used.
+    """
+    if isinstance(meshes, vtk.vtkPolyData):
+        meshes = [meshes]
+    meshes = list(meshes)
+    assert len(meshes) > 0, "At least one mesh is required"
+    assert all(isinstance(m, vtk.vtkPolyData) for m in meshes), "Meshes must be vtkPolyData"
     ndim = len(spacing)
 
-    # if both meshes are empty, return an empty sitk image
-    if mesh1.GetNumberOfPoints() == 0 and mesh2.GetNumberOfPoints() == 0:
+    meshes = [m for m in meshes if m.GetNumberOfPoints() > 0]
+    if not meshes:
         meta_sitk = sitk.GetImageFromArray(np.zeros((0,) * ndim))
         meta_sitk.SetSpacing(spacing)
         return meta_sitk
 
-    # create a meta image SimpleITK that encompasses both masks
-    ref_b = get_mesh_bounds(mesh1)
-    pred_b = get_mesh_bounds(mesh2)
-    ref_origin, ref_diagonal = ref_b[::2], ref_b[1::2]
-    pred_origin, pred_diagonal = pred_b[::2], pred_b[1::2]
-
-    # find element-wise minimum and maximum
-    origin = np.nanmin((ref_origin, pred_origin), axis=0)[:ndim]
-    diagonal = np.nanmax((ref_diagonal, pred_diagonal), axis=0)[:ndim]
+    bounds = np.array([m.GetBounds() for m in meshes])  # (xmin, xmax, ymin, ymax, zmin, zmax)
+    origin = bounds[:, 0::2].min(axis=0)[:ndim]
+    diagonal = bounds[:, 1::2].max(axis=0)[:ndim]
 
     if tolerance is not None:
         tolerance = np.array(tolerance)
@@ -793,7 +789,7 @@ def create_synthetic_examples_3d(
 
     # create a meta image SimpleITK that encompasses both masks
     meta_sitk = vtk_meshes_bbox_sitk_image(
-        vtk_mesh1, vtk_mesh2, spacing, tolerance=5 * np.array(spacing)
+        [vtk_mesh1, vtk_mesh2], spacing, tolerance=5 * np.array(spacing)
     )
 
     sitk_mask1 = vtk_voxelizer(vtk_mesh1, meta_sitk)
@@ -816,7 +812,7 @@ def create_synthetic_examples_2d(
 
     # create a meta image SimpleITK that encompasses both masks
     meta_sitk = vtk_meshes_bbox_sitk_image(
-        vtk_mesh1, vtk_mesh2, spacing, tolerance=5 * np.array(spacing)
+        [vtk_mesh1, vtk_mesh2], spacing, tolerance=5 * np.array(spacing)
     )
     sitk_mask1 = vtk_voxelizer(vtk_mesh1, meta_sitk)
     sitk_mask2 = vtk_voxelizer(vtk_mesh2, meta_sitk)

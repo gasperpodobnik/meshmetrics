@@ -352,3 +352,31 @@ def test_voxelizer_arguments():
     assert vtk_voxelizer(mesh, meta).GetSize() == meta.GetSize()
     # empty mesh with spacing gives an empty image
     assert np.prod(vtk_voxelizer(vtk.vtkPolyData(), spacing=(1.0, 1.0, 1.0)).GetSize()) == 0
+
+
+def test_meshes_bbox_image():
+    from meshmetrics.utils import vtk_meshes_bbox_sitk_image
+
+    def sphere(center, radius):
+        src = vtk.vtkSphereSource()
+        src.SetCenter(*center)
+        src.SetRadius(radius)
+        src.Update()
+        return src.GetOutput()
+
+    meshes = [sphere((0, 0, 0), 2), sphere((10, -5, 3), 1), sphere((-4, 6, -8), 3)]
+    spacing = (0.5, 1.0, 2.0)
+    img = vtk_meshes_bbox_sitk_image(meshes, spacing, tolerance=(1.0, 1.0, 1.0))
+    bounds = np.array([m.GetBounds() for m in meshes])
+    lo, hi = bounds[:, 0::2].min(0), bounds[:, 1::2].max(0)
+    np.testing.assert_allclose(img.GetOrigin(), lo - 1.0)
+    last_centre = np.array(img.GetOrigin()) + (np.array(img.GetSize()) - 1) * spacing
+    assert np.all(last_centre >= hi + 1.0 - np.array(spacing) - 1e-9)
+    np.testing.assert_allclose(img.GetDirection(), np.eye(3).ravel())
+
+    # a single mesh, and empty meshes are ignored
+    single = vtk_meshes_bbox_sitk_image(meshes[0], spacing)
+    with_empty = vtk_meshes_bbox_sitk_image([vtk.vtkPolyData(), meshes[0]], spacing)
+    assert single.GetSize() == with_empty.GetSize()
+    assert single.GetOrigin() == with_empty.GetOrigin()
+    assert np.prod(vtk_meshes_bbox_sitk_image([vtk.vtkPolyData()] * 2, spacing).GetSize()) == 0
