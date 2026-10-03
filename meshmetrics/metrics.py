@@ -12,7 +12,7 @@ from .utils import (
     sitk2np,
     vtk_measurements_2D,
     vtk_measurements_3D,
-    vtk_distance_field,
+    vtk_mask_distance_field,
     vtk_voxelizer,
     vtk_is_mesh_closed,
     vtk_meshes_bbox_sitk_image,
@@ -243,6 +243,8 @@ class DistanceMetrics:
         for name in ("ref", "pred"):
             for kind in ("np", "sitk", "vtk"):
                 setattr(self, f"_{name}_{kind}", None)
+        # BIoU distance fields: (max_dist, ref_field, pred_field)
+        self._dist_fields = None
         for name, attr in vars(type(self)).items():
             if isinstance(attr, cached_property):
                 self.__dict__.pop(name, None)
@@ -453,14 +455,29 @@ class DistanceMetrics:
 
         return d_ref2pred, b_ref, d_pred2ref, b_pred
 
-    @cached_property
+    def _dist_fields_within(self, max_dist: float) -> Tuple[np.ndarray, np.ndarray]:
+        """Distance fields of ref and pred foreground voxels to their own surface.
+
+        Distances are exact for voxels closer than `max_dist` to the surface; other
+        foreground voxels may be set to inf. Results are cached and reused for any
+        smaller `max_dist`.
+        """
+        if self._dist_fields is None or self._dist_fields[0] < max_dist:
+            fields = tuple(
+                vtk_mask_distance_field(
+                    getattr(self, f"{name}_sitk"),
+                    getattr(self, f"{name}_vtk"),
+                    max_dist=max_dist,
+                )
+                for name in ("ref", "pred")
+            )
+            self._dist_fields = (max_dist, *fields)
+        return self._dist_fields[1:]
+
+    @property
     def img_dist_field(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        ref_dist_field_np, pred_dist_field_np = vtk_distance_field(
-            ref_mesh=self.ref_vtk,
-            pred_mesh=self.pred_vtk,
-            ref_sitk=self.ref_sitk,
-            pred_sitk=self.pred_sitk,
-        )
+        """Full (exact) distance fields; foreground voxels to their own surface."""
+        ref_dist_field_np, pred_dist_field_np = self._dist_fields_within(np.inf)
         return self.ref_np, ref_dist_field_np, self.pred_np, pred_dist_field_np
 
     @staticmethod
@@ -648,6 +665,10 @@ class DistanceMetrics:
         Returns:
             float: The BIoU score in [0, 1].
             Returns 1.0 if both masks are empty, and 0.0 if only one mask is empty.
+
+        Raises:
+            ValueError: If `tau` is so small (relative to the pixel/voxel spacing) that
+            both boundary regions are empty, in which case BIoU is undefined.
         """
 
         assert isinstance(tau, numbers.Real), "tolerance must be a real number"
@@ -662,15 +683,19 @@ class DistanceMetrics:
                 warnings.warn("One of the masks is empty")
             return 0.0
         else:
-            ref_bbox_np, ref_dist_field_np, pred_bbox_np, pred_dist_field_np = (
-                self.img_dist_field
-            )
+            ref_dist_field_np, pred_dist_field_np = self._dist_fields_within(tau)
 
-            ref_hollow = (ref_dist_field_np < tau) & ref_bbox_np.astype(bool)
-            pred_hollow = (pred_dist_field_np < tau) & pred_bbox_np.astype(bool)
+            ref_hollow = (ref_dist_field_np < tau) & self.ref_np.astype(bool)
+            pred_hollow = (pred_dist_field_np < tau) & self.pred_np.astype(bool)
 
             num = (ref_hollow & pred_hollow).sum()
             denom = (ref_hollow | pred_hollow).sum()
+            if denom == 0:
+                raise ValueError(
+                    f"BIoU is undefined for tau={tau}: no pixel/voxel centre lies closer than "
+                    "tau to the mask boundary (boundary regions are empty). "
+                    f"Use a larger tau, e.g. at least the pixel/voxel spacing {self.spacing}."
+                )
 
             return num / denom
 
