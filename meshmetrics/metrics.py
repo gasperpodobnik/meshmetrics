@@ -533,7 +533,7 @@ class DistanceMetrics:
             perc_d_pred2ref = self.perc_surface_dist(
                 np.abs(d_pred2ref), b_pred, percentile
             )
-            return max(perc_d_ref2pred, perc_d_pred2ref)
+            return float(max(perc_d_ref2pred, perc_d_pred2ref))
 
     def masd(self) -> float:
         """Mean average surface distance (MASD).
@@ -562,7 +562,7 @@ class DistanceMetrics:
             d_ref2pred, b_ref, d_pred2ref, b_pred = self.distances
             mean_d_ref2pred = np.dot(np.abs(d_ref2pred), b_ref) / b_ref.sum()
             mean_d_pred2ref = np.dot(np.abs(d_pred2ref), b_pred) / b_pred.sum()
-            return (mean_d_ref2pred + mean_d_pred2ref) / 2
+            return float((mean_d_ref2pred + mean_d_pred2ref) / 2)
 
     def assd(self) -> float:
         """Average symmetric surface distance (ASSD).
@@ -591,7 +591,7 @@ class DistanceMetrics:
             num = np.dot(np.abs(d_ref2pred), b_ref) + np.dot(np.abs(d_pred2ref), b_pred)
             denom = b_ref.sum() + b_pred.sum()
             value = num / denom
-            return value
+            return float(value)
 
     def nsd(self, tau: float) -> float:
         """Normalized surface distance (NSD).
@@ -635,7 +635,7 @@ class DistanceMetrics:
             overlap_pred = b_pred[np.abs(d_pred2ref) <= tau].sum()
             num = overlap_ref + overlap_pred
             denom = b_ref.sum() + b_pred.sum()
-            return num / denom
+            return float(num / denom)
 
     def biou(self, tau: float) -> float:
         """Boundary Intersection over Union (BIoU).
@@ -695,7 +695,7 @@ class DistanceMetrics:
                     f"Use a larger tau, e.g. at least the pixel/voxel spacing {self.spacing}."
                 )
 
-            return num / denom
+            return float(num / denom)
 
     def dsc(self) -> float:
         """Dice Similarity Coefficient (DSC).
@@ -729,7 +729,7 @@ class DistanceMetrics:
         else:
             intersection = np.logical_and(self.ref_np, self.pred_np).sum()
             union = np.logical_or(self.ref_np, self.pred_np).sum()
-            return 2 * intersection / (union + intersection)
+            return float(2 * intersection / (union + intersection))
 
     def iou(self) -> float:
         """Intersection over Union (IoU).
@@ -763,7 +763,7 @@ class DistanceMetrics:
         else:
             intersection = np.logical_and(self.ref_np, self.pred_np).sum()
             union = np.logical_or(self.ref_np, self.pred_np).sum()
-            return intersection / union
+            return float(intersection / union)
 
 
 ALL_METRICS = ("hd", "masd", "assd", "nsd", "biou", "dsc", "iou")
