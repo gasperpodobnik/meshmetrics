@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/meshmetrics/
+      url: https://pypi.org/project/pymeshmetrics/
     permissions:
       id-token: write # required for trusted publishing
     steps:

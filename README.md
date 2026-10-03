@@ -31,21 +31,27 @@ sudo apt update && sudo apt install -y libxrender1
 ```
 
 ### Install `meshmetrics` package
-Add `meshmetrics` to your project with [uv](https://docs.astral.sh/uv/):
+Install from [PyPI](https://pypi.org/project/pymeshmetrics/) with pip, or add it to your project with [uv](https://docs.astral.sh/uv/):
 ```bash
-uv add git+https://github.com/gasperpodobnik/MeshMetrics.git
+pip install pymeshmetrics
+uv add pymeshmetrics
 ```
-or install it with pip:
+The package is published as `pymeshmetrics` and imported as `meshmetrics`:
+```python
+import meshmetrics
+```
+Optional support for `trimesh` and `meshio` inputs is available via extras: `pip install "pymeshmetrics[all]"` (or `[trimesh]` / `[meshio]`).
+
+To install the latest development version from GitHub:
 ```bash
-pip install git+https://github.com/gasperpodobnik/MeshMetrics.git
+pip install git+https://github.com/gasperpodobnik/meshmetrics.git
 ```
-Optional support for `trimesh` and `meshio` inputs is available via extras, e.g. `uv add "meshmetrics[all] @ git+https://github.com/gasperpodobnik/MeshMetrics.git"` (or `[trimesh]` / `[meshio]`).
 
 ### Development
 Clone the repository and create the environment (including dev tools and all extras):
 ```bash
-git clone https://github.com/gasperpodobnik/MeshMetrics.git
-cd MeshMetrics
+git clone https://github.com/gasperpodobnik/meshmetrics.git
+cd meshmetrics
 uv sync --all-extras
 uv run pytest
 ```

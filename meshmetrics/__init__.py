@@ -27,7 +27,7 @@ from .utils import (
 )
 
 try:
-    __version__ = version("meshmetrics")
+    __version__ = version("pymeshmetrics")
 except PackageNotFoundError:
     __version__ = "unknown"
 

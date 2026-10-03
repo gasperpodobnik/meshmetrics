@@ -1,5 +1,5 @@
 [project]
-name = "meshmetrics"
+name = "pymeshmetrics"
 version = "1.0.0"
 description = "Library to compute distance-based performance metrics for image segmentation tasks."
 readme = "README.md"
@@ -23,7 +23,7 @@ meshio = ["meshio"]
 all = ["trimesh", "meshio"]
 
 [project.urls]
-Homepage = "https://github.com/gasperpodobnik/MeshMetrics"
+Homepage = "https://github.com/gasperpodobnik/meshmetrics"
 Paper = "https://doi.org/10.48550/arXiv.2509.05670"
 
 [dependency-groups]
