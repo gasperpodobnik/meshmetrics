@@ -453,7 +453,7 @@ def vtk_voxelizer(mesh_vtk: vtk.vtkPolyData, meta_sitk: sitk.Image):
         # Create the full 4x4 transformation matrix
         # This transforms from world space to voxel space aligned with axes
         T = np.eye(4)
-        T[:ndim, :ndim] = direction.T  # Transpose for correct orientation
+        T[:ndim, :ndim] = direction  # world = origin + direction @ local
         T[:ndim, 3] = origin
         
         # Create VTK transform (inverse to transform mesh into aligned space)
@@ -484,7 +484,12 @@ def vtk_voxelizer(mesh_vtk: vtk.vtkPolyData, meta_sitk: sitk.Image):
         if ndim == 2:
             extent_max = np.append(extent_max, 0)
         voxel_extent = [0, extent_max[0], 0, extent_max[1], 0, extent_max[2]]
-    
+
+    # VTK expects 3D origin/spacing; pad for 2D images
+    if ndim == 2:
+        voxel_origin = np.append(voxel_origin[:2], 0.0)
+        voxel_spacing = np.append(voxel_spacing, 1.0)
+
     # Voxelize: polygonal data --> image stencil
     poly2stenc = vtk.vtkPolyDataToImageStencil()
     poly2stenc.SetInputData(mesh_vtk)
