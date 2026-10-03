@@ -315,3 +315,40 @@ def test_cell_sizes_match_per_cell():
     expected = [mesh.GetCell(i).ComputeArea() for i in range(mesh.GetNumberOfCells())]
     np.testing.assert_allclose(vtk_compute_cell_sizes(mesh), expected)
     assert vtk_compute_cell_sizes(vtk.vtkPolyData()).shape == (0,)
+
+
+@pytest.mark.parametrize(
+    "spacing, mesh_fn, ndim",
+    [((0.7, 0.9, 1.1), ellipsoid_mesh, 3), ((1.0, 1.0, 1.0), ellipsoid_mesh, 3), ((0.6, 0.8), ellipse_contour, 2)],
+)
+def test_voxelizer_with_spacing(spacing, mesh_fn, ndim):
+    mesh = mesh_fn()
+    img = vtk_voxelizer(mesh, spacing=spacing)
+    assert img.GetDimension() == ndim
+    np.testing.assert_allclose(img.GetSpacing(), spacing)
+    np.testing.assert_allclose(img.GetDirection(), np.eye(ndim).ravel())
+    # grid starts 2 pixels/voxels before the mesh bounds
+    bounds_min = np.array(mesh.GetBounds())[0 : 2 * ndim : 2]
+    np.testing.assert_allclose(img.GetOrigin(), bounds_min - 2 * np.array(spacing))
+
+    out = sitk2np(img).astype(bool)
+    # the mesh is fully covered: the outermost pixels/voxels are background on every side
+    for axis in range(ndim):
+        assert not out.take(0, axis=axis).any() and not out.take(-1, axis=axis).any()
+    # matches the exact shape
+    pts = voxel_centers_world(img)
+    gt = ((((pts - CENTER[:ndim]) / AXES[:ndim]) ** 2).sum(1) <= 1).reshape(img.GetSize())
+    assert dice(out, gt) > 0.99
+
+
+def test_voxelizer_arguments():
+    mesh = ellipsoid_mesh()
+    meta = make_image((40, 30, 24), (1.0, 1.0, 1.0), np.eye(3))
+    with pytest.raises(ValueError, match="exactly one"):
+        vtk_voxelizer(mesh)
+    with pytest.raises(ValueError, match="exactly one"):
+        vtk_voxelizer(mesh, meta, spacing=(1.0, 1.0, 1.0))
+    # positional reference image still works
+    assert vtk_voxelizer(mesh, meta).GetSize() == meta.GetSize()
+    # empty mesh with spacing gives an empty image
+    assert np.prod(vtk_voxelizer(vtk.vtkPolyData(), spacing=(1.0, 1.0, 1.0)).GetSize()) == 0

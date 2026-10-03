@@ -581,26 +581,44 @@ def vtk_distance_field(
     return ref_dist_field, pred_dist_field
 
 
-def vtk_voxelizer(mesh_vtk: vtk.vtkPolyData, meta_sitk: sitk.Image):
-    """
-    Voxelize a VTK mesh using SimpleITK image metadata, correctly handling image direction.
-    
-    Parameters:
-    -----------
+def vtk_voxelizer(
+    mesh_vtk: vtk.vtkPolyData,
+    meta_sitk: sitk.Image = None,
+    spacing: Union[tuple, list, np.ndarray] = None,
+) -> sitk.Image:
+    """Voxelize a closed mesh (3D) or closed contour (2D, in the z=0 plane).
+
+    Pixels/voxels whose centre lies inside the mesh are set to 1. The output grid is given by
+    exactly one of `meta_sitk` or `spacing`.
+
+    Parameters
+    ----------
     mesh_vtk : vtk.vtkPolyData
-        Input mesh to voxelize
-    meta_sitk : sitk.Image
-        Reference SimpleITK image providing spacing, origin, direction, and extent
-    
-    Returns:
-    --------
+        Input mesh, in world coordinates.
+    meta_sitk : sitk.Image, optional
+        Reference image whose grid (size, spacing, origin and direction) is used.
+    spacing : tuple, optional
+        Pixel/voxel size (2 or 3 values) of a new axis-aligned grid (identity direction) that
+        covers the mesh bounds plus a padding of 2 pixels/voxels on each side.
+
+    Returns
+    -------
     sitk.Image
-        Voxelized binary mask matching the reference image geometry
+        Binary mask on the reference grid, or on the new grid when `spacing` is given.
     """
     assert isinstance(mesh_vtk, vtk.vtkPolyData), "Mesh must be vtkPolyData"
-    assert isinstance(meta_sitk, sitk.Image), "Segmentation must be SimpleITK image"
+    if (meta_sitk is None) == (spacing is None):
+        raise ValueError("Provide exactly one of `meta_sitk` or `spacing`")
+    if spacing is not None:
+        spacing = np.asarray(spacing, dtype=float)
+        assert len(spacing) in (2, 3), "spacing must have 2 or 3 values"
+        assert np.all(spacing > 0), "spacing must be positive"
+        meta_sitk = vtk_meshes_bbox_sitk_image(
+            mesh_vtk, mesh_vtk, spacing=tuple(spacing), tolerance=2 * spacing
+        )
+    assert isinstance(meta_sitk, sitk.Image), "meta_sitk must be a SimpleITK image"
 
-    # check for empty image
+    # check for empty image (e.g. an empty mesh with `spacing`)
     if np.prod(meta_sitk.GetSize()) == 0:
         return meta_sitk
 
@@ -708,7 +726,7 @@ def vtk_meshes_bbox_sitk_image(
     mesh1: vtk.vtkPolyData,
     mesh2: vtk.vtkPolyData,
     spacing: tuple,
-    tolerance: tuple = None,
+    tolerance: tuple | None = None,
 ) -> sitk.Image:
     ndim = len(spacing)
 

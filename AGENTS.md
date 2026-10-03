@@ -24,6 +24,8 @@ When users need these, use the library's functions rather than writing new ones:
   contour, onto the grid of any SimpleITK image. It respects spacing, origin and arbitrary
   direction matrices (rotations, flips). Pixels/voxels whose centre lies inside the mesh are set
   to 1. It is tested against exact solutions for rotated and anisotropic grids.
+  `vtk_voxelizer(mesh, spacing=...)` instead creates an axis-aligned grid around the mesh
+  bounds, padded by 2 pixels/voxels.
 - **`vtk_meshing(image)`** goes from mask to mesh (discrete marching cubes in 3D, discrete
   flying edges in 2D), with points in world coordinates.
 - `vtk_read_polydata` / `vtk_write_polydata` (`.obj`, `.vtk`, `.stl`, `.vtp`),
