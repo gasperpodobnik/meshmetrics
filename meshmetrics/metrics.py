@@ -368,9 +368,8 @@ class DistanceMetrics:
                     f"{name}_vtk mesh must be vtk.vtkPolyData, trimesh.Trimesh or meshio.Mesh"
                 )
             assert vtk_is_mesh_closed(value), f"{name} mesh must be closed"
-            # We no longer check for non-manifold verts/edges, as some valid meshes can be non-manifold
-            # due to a bug in vtk SurfaceNets. However, this does not impact any of the calculations,
-            # as they all rely on absolute distances to the mesh surface.
+            # Non-manifold verts/edges are not checked, as they do not impact any of the
+            # calculations, which all rely on absolute distances to the mesh surface.
             setattr(self, attr, value)
 
         else:

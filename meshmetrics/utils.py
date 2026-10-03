@@ -6,7 +6,7 @@ import SimpleITK as sitk
 import vtk
 
 from vtk.util.numpy_support import vtk_to_numpy, numpy_to_vtkIdTypeArray, numpy_to_vtk
-from SimpleITK.utilities.vtk import sitk2vtk, vtk2sitk
+from SimpleITK.utilities.vtk import vtk2sitk
 
 
 def np2sitk(img_np: np.ndarray, swapaxes=True) -> sitk.Image:
@@ -158,57 +158,71 @@ def vtk_is_mesh_manifold(polydata):
     return boundary_edges == 0
 
 
-def vtk_2D_meshing(
-    src_img: Union[str, Path, sitk.Image], pad: bool = True
-) -> vtk.vtkPolyData:
-    src_img = to_sitk(src_img)
+def _vtk_discrete_meshing(src_img: sitk.Image, pad: bool) -> vtk.vtkPolyData:
+    """Mesh the foreground (> 0) of a 2D/3D mask with discrete flying edges / marching cubes.
 
+    The mask is meshed in index space and the points are then mapped to world coordinates
+    (spacing, origin and direction), independent of VTK's support for image direction.
+    """
     n_dim = src_img.GetDimension()
-    assert n_dim == 2, "Only 2D images are supported for marching squares"
-
-    if sitk.GetArrayFromImage(src_img).sum() == 0:
+    if not sitk.GetArrayViewFromImage(src_img).any():
         return vtk.vtkPolyData()
 
     # pad to avoid potential open boundary related issues
     if pad:
-        src_img = sitk.ConstantPad(src_img, (1, 1), (1, 1), 0)
+        src_img = sitk.ConstantPad(src_img, (1,) * n_dim, (1,) * n_dim, 0)
 
-    vtkImage = sitk2vtk(src_img > 0)
-    vtk.vtkLogger.SetStderrVerbosity(vtk.vtkLogger.VERBOSITY_OFF)
-    meshing_alg = vtk.vtkSurfaceNets2D()
-    meshing_alg.SmoothingOff()
-    meshing_alg.SetInputData(vtkImage)
+    mask_np = (sitk.GetArrayViewFromImage(src_img) > 0).astype(np.uint8)
+    vtk_img = vtk.vtkImageData()
+    vtk_img.SetDimensions(*src_img.GetSize(), *(1,) * (3 - n_dim))
+    vtk_img.GetPointData().SetScalars(numpy_to_vtk(mask_np.ravel(), deep=True))
+
+    if n_dim == 2:
+        meshing_alg = vtk.vtkDiscreteFlyingEdges2D()
+    else:
+        meshing_alg = vtk.vtkDiscreteMarchingCubes()
+        meshing_alg.ComputeNormalsOff()
+        meshing_alg.ComputeGradientsOff()
+    meshing_alg.SetValue(0, 1)
+    meshing_alg.ComputeScalarsOff()
+    meshing_alg.SetInputData(vtk_img)
     meshing_alg.Update()
     mesh = meshing_alg.GetOutput()
+    if mesh.GetNumberOfPoints() == 0:  # e.g. a single-slice 3D volume without padding
+        return vtk.vtkPolyData()
 
+    # index -> world coordinates
+    pts_idx = vtk_to_numpy(mesh.GetPoints().GetData())[:, :n_dim]
+    pts_world = index2world(
+        pts_idx,
+        np.array(src_img.GetSpacing()),
+        np.array(src_img.GetOrigin()),
+        np.array(src_img.GetDirection()).reshape(n_dim, n_dim),
+    )
+    if n_dim == 2:
+        pts_world = np.concatenate([pts_world, np.zeros((len(pts_world), 1))], axis=1)
+    points = vtk.vtkPoints()
+    points.SetData(numpy_to_vtk(np.ascontiguousarray(pts_world, dtype=float), deep=True))
+    mesh.SetPoints(points)
     return mesh
+
+
+def vtk_2D_meshing(
+    src_img: Union[str, Path, sitk.Image], pad: bool = True
+) -> vtk.vtkPolyData:
+    """Contour (line segments in the z=0 plane) of a 2D mask, using discrete flying edges."""
+    src_img = to_sitk(src_img)
+    assert src_img.GetDimension() == 2, "Only 2D images are supported for discrete flying edges"
+    return _vtk_discrete_meshing(src_img, pad)
 
 
 def vtk_3D_meshing(
     src_img: Union[str, Path, sitk.Image], pad: bool = True
 ) -> vtk.vtkPolyData:
+    """Triangle surface mesh of a 3D mask, using discrete marching cubes."""
     src_img = to_sitk(src_img)
-
-    n_dim = src_img.GetDimension()
-    assert n_dim == 3, "Only 3D images are supported for marching cubes"
-
-    if sitk.GetArrayViewFromImage(src_img).sum() == 0:
-        return vtk.vtkPolyData()
-
-    # pad to avoid potential open boundary related issues
-    if pad:
-        src_img = sitk.ConstantPad(src_img, (1, 1, 1), (1, 1, 1), 0)
-
-    vtkImage = sitk2vtk(src_img > 0)
-    vtk.vtkLogger.SetStderrVerbosity(vtk.vtkLogger.VERBOSITY_OFF)
-    meshing_alg = vtk.vtkSurfaceNets3D()
-    meshing_alg.SmoothingOff()
-    meshing_alg.SetOutputMeshTypeToTriangles()
-    meshing_alg.SetInputData(vtkImage)
-    meshing_alg.Update()
-    mesh = meshing_alg.GetOutput()
-
-    return mesh
+    assert src_img.GetDimension() == 3, "Only 3D images are supported for discrete marching cubes"
+    return _vtk_discrete_meshing(src_img, pad)
 
 
 def vtk_meshing(src_img: Union[str, Path, sitk.Image]):
@@ -225,7 +239,7 @@ def vtk_meshing(src_img: Union[str, Path, sitk.Image]):
 
 
 def vtk_2D_mask_surface(mask_sitk: sitk.Image) -> vtk.vtkPolyData:
-    """Open 3D surface (vertical walls) of a 2D mask's SurfaceNets contour.
+    """Open 3D surface (vertical walls) of a 2D mask's contour (see `vtk_2D_meshing`).
 
     `vtk.vtkImplicitPolyDataDistance` needs a surface, so the 2D contour (in the z=0 plane)
     is extruded along z from -0.5 to 0.5. For points in the z=0 plane, distances to this
@@ -488,7 +502,7 @@ def vtk_mask_distance_field(
     Args:
         mask_sitk: Binary mask.
         mesh_vtk: Surface of the mask (3D only). If None, or for 2D masks, the surface is
-            created from the mask with SurfaceNets.
+            created from the mask with `vtk_meshing`.
         max_dist: If given, exact distances are only computed for voxels that may be closer
             than ``max_dist`` to the surface (see ``mesh_distance_lower_bound``); the
             remaining foreground voxels are set to ``np.inf``.

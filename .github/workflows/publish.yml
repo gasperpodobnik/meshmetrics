@@ -1,0 +1,51 @@
+name: Publish to PyPI
+
+# Runs when a GitHub release is published (tag vX.Y.Z). Uses PyPI trusted publishing,
+# so no API token is stored in the repository (see RELEASING.md for the one-time setup).
+on:
+  release:
+    types: [published]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      - name: Install system dependencies (VTK)
+        run: sudo apt-get update && sudo apt-get install -y libxrender1 libgl1
+      - run: uv sync --all-extras
+      - run: uv run pytest
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      - name: Check that the tag matches the package version
+        run: |
+          version=$(uv version --short)
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match package version v${version}"
+            exit 1
+          fi
+      - run: uv build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: [test, build]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/meshmetrics/
+    permissions:
+      id-token: write # required for trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
