@@ -47,7 +47,7 @@ Clone the repository and create the environment (including dev tools and all ext
 git clone https://github.com/gasperpodobnik/MeshMetrics.git
 cd MeshMetrics
 uv sync --all-extras
-uv run python -c "import meshmetrics"
+uv run pytest
 ```
 
 ## Usage
@@ -60,8 +60,6 @@ import SimpleITK as sitk
 from meshmetrics import DistanceMetrics
 
 data_dir = Path("data")
-# initialize DistanceMetrics object
-dist_metrics = DistanceMetrics()
 
 # read binary segmentation masks
 ref_sitk = sitk.ReadImage(str(data_dir / "example_3d_ref_mask.nii.gz"))
@@ -71,28 +69,27 @@ pred_sitk = sitk.ReadImage(str(data_dir / "example_3d_pred_mask.nii.gz"))
 percentile = 95  # percentile for HD
 tau = 2.0  # tolerance for NSD and BIoU
 
-# Initialize distance metrics class
-mesh_metrics = DistanceMetrics()
+# Initialize distance metrics class and set inputs
+dist_metrics = DistanceMetrics()
+dist_metrics.set_input(ref=ref_sitk, pred=pred_sitk)
 
-## ----- example (2D) -----
-mesh_metrics.set_input(sitk_mask1, sitk_mask2)
 # store flags indicating empty masks
 results = {
-    "ref_is_empty": mesh_metrics.ref_is_empty,
-    "pred_is_empty": mesh_metrics.pred_is_empty,
+    "ref_is_empty": dist_metrics.ref_is_empty,
+    "pred_is_empty": dist_metrics.pred_is_empty,
 }
 # Hausdorff distance (HD), by default, HD percentile is set to 100 (equivalent to HD)
-results["HD_100"] = mesh_metrics.hd()
+results["HD_100"] = dist_metrics.hd()
 # p-th percentile HD (HD_p)
-results[f"HD_{percentile}"] = mesh_metrics.hd(percentile=percentile)
+results[f"HD_{percentile}"] = dist_metrics.hd(percentile=percentile)
 # Mean average surface distance (MASD)
-results["MASD"] = mesh_metrics.masd()
+results["MASD"] = dist_metrics.masd()
 # Average symmetric surface distance (ASSD)
-results["ASSD"] = mesh_metrics.assd()
+results["ASSD"] = dist_metrics.assd()
 # Normalized surface distance (NSD) with tau
-results[f"NSD_{tau}"] = mesh_metrics.nsd(tau=tau)
+results[f"NSD_{tau}"] = dist_metrics.nsd(tau=tau)
 # Boundary intersection over union (BIoU) with tau
-results[f"BIoU_{tau}"] = mesh_metrics.biou(tau=tau)
+results[f"BIoU_{tau}"] = dist_metrics.biou(tau=tau)
 
 # print metric values
 units = {"HD": "mm", "MASD": "mm", "ASSD": "mm", "NSD": "%", "BIoU": "%"}
@@ -108,7 +105,7 @@ ref_np = sitk.GetArrayFromImage(ref_sitk).astype(bool)
 pred_np = sitk.GetArrayFromImage(pred_sitk).astype(bool)
 
 # spacing should resemble the order of numpy array axes
-spacing = ref_np.GetSpacing()[::-1]
+spacing = ref_sitk.GetSpacing()[::-1]
 
 dist_metrics = DistanceMetrics()
 dist_metrics.set_input(ref=ref_np, pred=pred_np, spacing=spacing)
