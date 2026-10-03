@@ -1,7 +1,7 @@
 from functools import cached_property
 import numbers
 import warnings
-from typing import Tuple, Union
+from typing import Dict, Iterable, Optional, Tuple, Union
 
 import numpy as np
 import vtk
@@ -766,6 +766,72 @@ class DistanceMetrics:
             intersection = np.logical_and(self.ref_np, self.pred_np).sum()
             union = np.logical_or(self.ref_np, self.pred_np).sum()
             return intersection / union
+
+
+ALL_METRICS = ("hd", "masd", "assd", "nsd", "biou", "dsc", "iou")
+
+
+def compute_metrics(
+    ref: Union[np.ndarray, sitk.Image, MeshTypes],
+    pred: Union[np.ndarray, sitk.Image, MeshTypes],
+    spacing: Union[tuple, list, np.ndarray] = None,
+    taus: Iterable[float] = (),
+    percentiles: Iterable[float] = (100, 95),
+    metrics: Optional[Iterable[str]] = None,
+    verbose: bool = True,
+) -> Dict[str, Union[float, bool]]:
+    """Compute several metrics for one pair of segmentations in a single call.
+
+    Accepts the same inputs as `DistanceMetrics.set_input`.
+
+    Args:
+        ref, pred, spacing: See `DistanceMetrics.set_input`.
+        taus: Tolerances (in physical units) for NSD and BIoU. These are application-specific,
+            so NSD and BIoU are only computed for the given values.
+        percentiles: Percentiles for HD (100 is the classic Hausdorff distance).
+        metrics: Subset of ``("hd", "masd", "assd", "nsd", "biou", "dsc", "iou")`` to compute.
+            Defaults to all, except NSD and BIoU when no `taus` are given.
+        verbose: Warn about empty masks.
+
+    Returns:
+        dict with ``ref_is_empty``, ``pred_is_empty`` and one entry per metric, e.g.
+        ``HD_100``, ``HD_95``, ``MASD``, ``ASSD``, ``NSD_2.0``, ``BIoU_2.0``, ``DSC``, ``IoU``.
+
+    Example:
+        >>> results = compute_metrics(ref_sitk, pred_sitk, taus=(1.0, 2.0))
+    """
+    taus, percentiles = list(taus), list(percentiles)
+    if metrics is None:
+        metrics = [m for m in ALL_METRICS if taus or m not in ("nsd", "biou")]
+    metrics = [m.lower() for m in metrics]
+    unknown = sorted(set(metrics) - set(ALL_METRICS))
+    if unknown:
+        raise ValueError(f"Unknown metrics {unknown}, available: {list(ALL_METRICS)}")
+    if not taus and {"nsd", "biou"} & set(metrics):
+        raise ValueError("NSD and BIoU need at least one tolerance in `taus`")
+    if not percentiles and "hd" in metrics:
+        raise ValueError("HD needs at least one value in `percentiles`")
+
+    dm = DistanceMetrics(verbose=verbose)
+    dm.set_input(ref, pred, spacing=spacing)
+
+    results = {"ref_is_empty": dm.ref_is_empty, "pred_is_empty": dm.pred_is_empty}
+    for m in ALL_METRICS:  # fixed output order
+        if m not in metrics:
+            continue
+        if m == "hd":
+            for p in percentiles:
+                results[f"HD_{p:g}"] = dm.hd(percentile=p)
+        elif m in ("nsd", "biou"):
+            fn = dm.nsd if m == "nsd" else dm.biou
+            # largest tau first: BIoU reuses the cached distance band for smaller taus
+            values = {tau: fn(tau=tau) for tau in sorted(taus, reverse=True)}
+            name = "NSD" if m == "nsd" else "BIoU"
+            for tau in taus:
+                results[f"{name}_{float(tau)}"] = values[tau]
+        else:
+            results[{"iou": "IoU"}.get(m, m.upper())] = getattr(dm, m)()
+    return results
 
 
 ## test

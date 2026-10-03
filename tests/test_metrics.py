@@ -225,3 +225,48 @@ def test_biou_raises_for_too_small_tau():
     with pytest.raises(ValueError, match="BIoU is undefined for tau=0.5"):
         m.biou(0.5)
     assert 0 < m.biou(1.0) < 1
+
+
+def test_compute_metrics_matches_class():
+    from meshmetrics import compute_metrics
+
+    ref, pred = to_image(A, (0.8, 1.0, 1.3)), to_image(B, (0.8, 1.0, 1.3))
+    res = compute_metrics(ref, pred, taus=(1.0, 2.5))
+    assert list(res) == [
+        "ref_is_empty", "pred_is_empty", "HD_100", "HD_95", "MASD", "ASSD",
+        "NSD_1.0", "NSD_2.5", "BIoU_1.0", "BIoU_2.5", "DSC", "IoU",
+    ]  # fmt: skip
+    m = DistanceMetrics()
+    m.set_input(ref, pred)
+    expected = {
+        "HD_100": m.hd(), "HD_95": m.hd(95), "MASD": m.masd(), "ASSD": m.assd(),
+        "NSD_1.0": m.nsd(1.0), "NSD_2.5": m.nsd(2.5), "BIoU_1.0": m.biou(1.0),
+        "BIoU_2.5": m.biou(2.5), "DSC": m.dsc(), "IoU": m.iou(),
+    }  # fmt: skip
+    for k, v in expected.items():
+        assert res[k] == pytest.approx(v), k
+    assert res["ref_is_empty"] is False and res["pred_is_empty"] is False
+
+
+def test_compute_metrics_defaults_subset_and_numpy_2d():
+    from meshmetrics import compute_metrics
+
+    res = compute_metrics(A[:, :, 12], B[:, :, 12], spacing=(0.7, 1.1))
+    assert not any(k.startswith(("NSD", "BIoU")) for k in res)  # no taus given
+    assert {"HD_100", "HD_95", "MASD", "ASSD", "DSC", "IoU"} <= set(res)
+
+    res = compute_metrics(
+        A[:, :, 12], B[:, :, 12], spacing=(0.7, 1.1), metrics=["HD", "nsd"], taus=[2], percentiles=[50]
+    )
+    assert list(res) == ["ref_is_empty", "pred_is_empty", "HD_50", "NSD_2.0"]
+
+
+def test_compute_metrics_errors_and_empty():
+    from meshmetrics import compute_metrics
+
+    with pytest.raises(ValueError, match="Unknown metrics"):
+        compute_metrics(to_image(A), to_image(B), metrics=["hd", "dice"])
+    with pytest.raises(ValueError, match="need at least one tolerance"):
+        compute_metrics(to_image(A), to_image(B), metrics=["biou"])
+    res = compute_metrics(to_image(A), to_image(np.zeros_like(B)), taus=[1.0], verbose=False)
+    assert res["pred_is_empty"] and res["HD_100"] == np.inf and res["NSD_1.0"] == 0.0

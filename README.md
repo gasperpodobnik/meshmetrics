@@ -51,6 +51,22 @@ uv run pytest
 ```
 
 ## Usage
+### Quick start
+Compute all metrics for a pair of segmentations in one call:
+```python
+import SimpleITK as sitk
+from meshmetrics import compute_metrics
+
+ref_sitk = sitk.ReadImage("data/example_3d_ref_mask.nii.gz")
+pred_sitk = sitk.ReadImage("data/example_3d_pred_mask.nii.gz")
+
+results = compute_metrics(ref_sitk, pred_sitk, taus=(2.0, 5.0))
+# {'ref_is_empty': False, 'pred_is_empty': False, 'HD_100': ..., 'HD_95': ..., 'MASD': ..., 'ASSD': ...,
+#  'NSD_2.0': ..., 'NSD_5.0': ..., 'BIoU_2.0': ..., 'BIoU_5.0': ..., 'DSC': ..., 'IoU': ...}
+```
+`taus` are the tolerances (in physical units) for NSD and BIoU; they are application-specific, so NSD and BIoU are only computed when `taus` are given. Use `percentiles` to choose the HD variants (default `(100, 95)`) and `metrics` to select a subset, e.g. `metrics=["hd", "nsd"]`. Inputs can be any of the supported types (see below); numpy arrays and pairs of meshes also need `spacing`.
+
+### Step-by-step
 Simple usage example of `MeshMetrics` for 3D segmentation masks is shown below.
 See [`examples.ipynb`](examples.ipynb) notebook for more examples.
 
