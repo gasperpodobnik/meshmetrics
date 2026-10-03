@@ -45,3 +45,10 @@ packages = ["meshmetrics"]
 
 [tool.hatch.build.targets.sdist]
 include = ["meshmetrics", "MeshMetrics.py", "README.md", "LICENSE"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    # numpy>=2.5 deprecation inside SimpleITKUtilities' vtk2sitk
+    "ignore:Setting the shape on a NumPy array:DeprecationWarning",
+]
