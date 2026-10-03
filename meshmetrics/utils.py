@@ -9,13 +9,16 @@ from vtk.util.numpy_support import vtk_to_numpy, numpy_to_vtkIdTypeArray, numpy_
 from SimpleITK.utilities.vtk import sitk2vtk, vtk2sitk
 
 
-def np2sitk(img_np: np.ndarray, spacing, swapaxes=True) -> sitk.Image:
+def np2sitk(img_np: np.ndarray, swapaxes=True) -> sitk.Image:
+    """Converts a numpy array to a SimpleITK image (default geometry).
+
+    With ``swapaxes=True`` the array axes map to the image x, y(, z) axes, i.e.
+    the inverse of ``sitk2np``. Set spacing/origin/direction on the result.
+    """
     if swapaxes:
         assert img_np.ndim in [2, 3], "Unsupported number of dimensions"
         img_np = np.swapaxes(img_np, 0, -1)
-    img_sitk = sitk.GetImageFromArray(img_np)
-    img_sitk.SetSpacing(spacing)
-    return img_sitk
+    return sitk.GetImageFromArray(img_np)
 
 
 def sitk2np(sitk_img: sitk.Image) -> np.ndarray:
@@ -558,7 +561,8 @@ def vtk_meshes_bbox_sitk_image(
 
     sitk_size = np.ceil((diagonal - origin) / np.array(spacing)).astype(int)
 
-    meta_sitk = np2sitk(np.zeros(sitk_size, dtype=np.uint8), spacing=spacing)
+    meta_sitk = np2sitk(np.zeros(sitk_size, dtype=np.uint8))
+    meta_sitk.SetSpacing(spacing)
     meta_sitk.SetOrigin(origin)
 
     return meta_sitk

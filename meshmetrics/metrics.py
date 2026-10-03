@@ -298,7 +298,9 @@ class DistanceMetrics:
             assert id(value) == id(
                 np_attr
             ), f"mask must be the same object as `{name}_np`"
-            setattr(self, attr, np2sitk(value, spacing=self.spacing))
+            img_sitk = np2sitk(value)
+            img_sitk.SetSpacing(self.spacing)
+            setattr(self, attr, img_sitk)
 
         elif isinstance(value, sitk.Image):
             # optional asserts about pixel type, number of labels, etc.
