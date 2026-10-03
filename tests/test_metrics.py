@@ -48,26 +48,20 @@ def test_numpy_and_sitk_inputs_agree():
 
 
 def test_metrics_invariant_to_direction():
-    """Rigidly rotating the image grid must not change grid-based metrics.
-
-    Surface-distance metrics (HD, NSD, ...) are excluded: vtkSurfaceNets3D picks the
-    quad-splitting diagonal from floating-point ties, so triangle centroids (and
-    hence those metrics) depend slightly on grid orientation.
-    """
+    """Rigidly rotating the image grid must not change any metric."""
     origin = (10.0, -5.0, 3.0)
     ref = DistanceMetrics()
     ref.set_input(to_image(A, origin=origin), to_image(B, origin=origin))
-    expected = all_metrics(ref)
+    expected = all_metrics(ref, tau=1.5)
     for direction in R.random(3, random_state=0).as_matrix():
         m = DistanceMetrics()
         m.set_input(
             to_image(A, origin=origin, direction=direction),
             to_image(B, origin=origin, direction=direction),
         )
-        res = all_metrics(m)
-        for k in ("dsc", "iou"):
-            assert res[k] == pytest.approx(expected[k]), k
-        assert res["biou"] == pytest.approx(expected["biou"], abs=0.01)
+        res = all_metrics(m, tau=1.5)
+        for k in expected:
+            assert res[k] == pytest.approx(expected[k], rel=1e-6), k
 
 
 @pytest.mark.parametrize("mesh_side", ["ref", "pred"])
@@ -221,9 +215,10 @@ def test_narrow_band_cache_grows_with_tau():
 
 def test_biou_raises_for_too_small_tau():
     m = DistanceMetrics()
-    m.set_input(to_image(A), to_image(B))  # 1 mm voxels: centres are >= 0.5 from the surface
-    with pytest.raises(ValueError, match="BIoU is undefined for tau=0.5"):
-        m.biou(0.5)
+    # 1 mm voxels: centres are >= 0.5/sqrt(3) (corner cut of marching cubes) from the surface
+    m.set_input(to_image(A), to_image(B))
+    with pytest.raises(ValueError, match="BIoU is undefined for tau=0.2"):
+        m.biou(0.2)
     assert 0 < m.biou(1.0) < 1
 
 
