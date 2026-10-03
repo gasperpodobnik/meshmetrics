@@ -380,3 +380,38 @@ def test_meshes_bbox_image():
     assert single.GetSize() == with_empty.GetSize()
     assert single.GetOrigin() == with_empty.GetOrigin()
     assert np.prod(vtk_meshes_bbox_sitk_image([vtk.vtkPolyData()] * 2, spacing).GetSize()) == 0
+
+
+def _segment_distances_reference(contour, surface):
+    """Per-segment loop (the original implementation) as reference."""
+    ipd = vtk.vtkImplicitPolyDataDistance()
+    ipd.SetInput(surface)
+    lines, ids = contour.GetLines(), vtk.vtkIdList()
+    lines.InitTraversal()
+    dists, lengths = [], []
+    while lines.GetNextCell(ids):
+        p0 = np.array(contour.GetPoint(ids.GetId(0)))
+        p1 = np.array(contour.GetPoint(ids.GetId(1)))
+        lengths.append(np.linalg.norm(p0 - p1))
+        dists.append(abs(ipd.FunctionValue((p0 + p1) / 2)))
+    return np.array(dists), np.array(lengths)
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_2D_segment_distances_match_reference(seed):
+    from meshmetrics.utils import vtk_2D_centroid2surface_dist_length
+
+    ref_img = random_mask_image(2, seed, touch_border=seed % 2 == 0)
+    pred_img = random_mask_image(2, seed + 10, touch_border=seed % 2 == 1)
+    pred_img.CopyInformation(ref_img)  # same grid (rotated, anisotropic)
+    contour, surface = vtk_2D_meshing(ref_img), vtk_2D_mask_surface(pred_img)
+
+    dists, lengths = vtk_2D_centroid2surface_dist_length(contour, surface)
+    exp_dists, exp_lengths = _segment_distances_reference(contour, surface)
+    assert len(dists) == contour.GetNumberOfLines() > 0
+    np.testing.assert_allclose(dists, exp_dists, atol=1e-9)
+    np.testing.assert_allclose(lengths, exp_lengths, atol=1e-9)
+
+    # empty contour
+    empty_d, empty_l = vtk_2D_centroid2surface_dist_length(vtk.vtkPolyData(), surface)
+    assert empty_d.shape == empty_l.shape == (0,)
