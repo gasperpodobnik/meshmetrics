@@ -1,4 +1,5 @@
-from functools import lru_cache
+from functools import cached_property
+import numbers
 import warnings
 from typing import Tuple, Union
 
@@ -15,6 +16,7 @@ from .utils import (
     vtk_voxelizer,
     vtk_is_mesh_closed,
     vtk_meshes_bbox_sitk_image,
+    vtk_points_outside_image,
     trimesh_to_vtk,
     meshio_to_vtk,
 )
@@ -44,17 +46,7 @@ RUNTIME_MESH_TYPES = tuple(
 class DistanceMetrics:
     def __init__(self, verbose: bool = True):
         self.verbose = verbose
-
-        # internal variables
-        self._ref_np = None
-        self._pred_np = None
-        self._spacing = None
-        self._ref_sitk = None
-        self._pred_sitk = None
-        self._ref_vtk = None
-        self._pred_vtk = None
-        self._ref_vtk = None
-        self._pred_vtk = None
+        self.clear_cache()
 
     def set_input(
         self,
@@ -112,20 +104,13 @@ class DistanceMetrics:
                 spacing is None
             ), "spacing will be inferred from the SimpleITK image input"
             if isinstance(ref, sitk.Image):
-                self.ref_sitk = ref
-                spacing = ref.GetSpacing()
-                ref = vtk_meshing(ref)
+                self._set_input_mixed(img_name="ref", img=ref, mesh_name="pred", mesh=pred)
             else:
-                self.pred_sitk = pred
-                spacing = pred.GetSpacing()
-                pred = vtk_meshing(pred)
-            self._set_input_vtk(ref, pred, spacing)
+                self._set_input_mixed(img_name="pred", img=pred, mesh_name="ref", mesh=ref)
         else:
-            assert isinstance(
-                pred, (sitk.Image, *RUNTIME_MESH_TYPES)
-            ), "if `ref` is SimpleITK.Image, `pred` must be SimpleITK.Image, vtk.vtkPolyData, trimesh.Trimesh or meshio.Mesh"
             raise ValueError(
-                "ref must be a numpy.ndarray, SimpleITK.Image, vtk.vtkPolyData, trimesh.Trimesh or meshio.Mesh"
+                "`ref` and `pred` must be numpy.ndarray, SimpleITK.Image, vtk.vtkPolyData, "
+                f"trimesh.Trimesh or meshio.Mesh (got {type(ref).__name__} and {type(pred).__name__})"
             )
 
     def _set_input_numpy(
@@ -219,20 +204,48 @@ class DistanceMetrics:
         self.ref_np = self.ref_sitk
         self.pred_np = self.pred_sitk
 
+    def _set_input_mixed(
+        self,
+        img_name: str,
+        img: sitk.Image,
+        mesh_name: str,
+        mesh: MeshTypes,
+    ):
+        """One input is a SimpleITK image and the other a mesh (in world coordinates).
+
+        The image grid is kept as is and the mesh is voxelized onto it.
+        """
+        self.clear_cache()
+        self.spacing = img.GetSpacing()
+
+        setattr(self, f"{img_name}_sitk", img)
+        setattr(self, f"{img_name}_np", img)
+        setattr(self, f"{img_name}_vtk", img)
+
+        setattr(self, f"{mesh_name}_vtk", mesh)
+        mesh_vtk = getattr(self, f"{mesh_name}_vtk")
+        if vtk_points_outside_image(mesh_vtk, img):
+            warnings.warn(
+                f"`{mesh_name}` mesh extends beyond the `{img_name}` image grid; "
+                "the part outside is clipped in grid-based metrics (DSC, IoU, BIoU)"
+            )
+        mesh_sitk = vtk_voxelizer(mesh_vtk, img)
+        setattr(self, f"{mesh_name}_sitk", mesh_sitk)
+        setattr(self, f"{mesh_name}_np", mesh_sitk)
+
     @property
     def n_dim(self):
         return len(self.spacing)
 
     def clear_cache(self):
-        self.__init__()
-        cl = self.__class__
-        for attr in dir(cl):
-            if hasattr(cl, attr):
-                cl_attr = getattr(cl, attr)
-                if hasattr(cl_attr, "fget"):
-                    cl_attr_fget = getattr(cl_attr, "fget")
-                    if hasattr(cl_attr_fget, "cache_clear"):
-                        cl_attr_fget.cache_clear()
+        """Reset inputs and all cached results of this instance."""
+        self._spacing = None
+        for name in ("ref", "pred"):
+            for kind in ("np", "sitk", "vtk"):
+                setattr(self, f"_{name}_{kind}", None)
+        for name, attr in vars(type(self)).items():
+            if isinstance(attr, cached_property):
+                self.__dict__.pop(name, None)
 
     @property
     def spacing(self) -> tuple:
@@ -241,8 +254,8 @@ class DistanceMetrics:
     @spacing.setter
     def spacing(self, value):
         if self._spacing is not None:
-            assert (
-                value == self.spacing
+            assert len(value) == len(self._spacing) and np.allclose(
+                value, self._spacing
             ), "spacing must be the same as the previously set spacing"
         else:
             assert isinstance(
@@ -411,18 +424,15 @@ class DistanceMetrics:
     def pred_vtk(self, value: Union[np.ndarray, sitk.Image, MeshTypes]):
         self._set_vtk("pred", value)
 
-    @property
-    @lru_cache
+    @cached_property
     def ref_is_empty(self) -> bool:
         return self.ref_vtk.GetNumberOfPoints() == 0
 
-    @property
-    @lru_cache
+    @cached_property
     def pred_is_empty(self) -> bool:
         return self.pred_vtk.GetNumberOfPoints() == 0
 
-    @property
-    @lru_cache
+    @cached_property
     def distances(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         if self.ref_is_empty or self.pred_is_empty:
             return None
@@ -443,8 +453,7 @@ class DistanceMetrics:
 
         return d_ref2pred, b_ref, d_pred2ref, b_pred
 
-    @property
-    @lru_cache
+    @cached_property
     def img_dist_field(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         ref_dist_field_np, pred_dist_field_np = vtk_distance_field(
             ref_mesh=self.ref_vtk,
@@ -594,7 +603,7 @@ class DistanceMetrics:
             float: The NSD score in [0, 1].
             Returns 1.0 if both masks are empty, and 0 if only one mask is empty.
         """
-        assert isinstance(tau, (int, float)), "tolerance must be a float"
+        assert isinstance(tau, numbers.Real), "tolerance must be a real number"
         assert tau >= 0, "tolerance must be greater than or equal to zero"
 
         if self.ref_is_empty and self.pred_is_empty:
@@ -641,7 +650,7 @@ class DistanceMetrics:
             Returns 1.0 if both masks are empty, and 0.0 if only one mask is empty.
         """
 
-        assert isinstance(tau, (int, float)), "tolerance must be a float"
+        assert isinstance(tau, numbers.Real), "tolerance must be a real number"
         assert tau > 0, "tolerance must be greater than zero"
 
         if self.ref_is_empty and self.pred_is_empty:
