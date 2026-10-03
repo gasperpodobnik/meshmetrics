@@ -1,6 +1,6 @@
 [project]
 name = "pymeshmetrics"
-version = "1.0.0"
+version = "1.0.1"
 description = "Library to compute distance-based performance metrics for image segmentation tasks."
 readme = "README.md"
 license = "Apache-2.0"
@@ -9,12 +9,12 @@ authors = [
     { name = "Gasper Podobnik" },
     { name = "Tomaz Vrtovec" },
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "numpy",
     "SimpleITK",
     "SimpleITKUtilities",
-    "vtk>=9.3",  # vtkSurfaceNets2D/3D
+    "vtk>=9.1",  # 9.0 uses np.bool, removed in numpy 1.24
 ]
 
 [project.optional-dependencies]
@@ -30,7 +30,6 @@ Paper = "https://doi.org/10.48550/arXiv.2509.05670"
 dev = [
     "pytest",
     "scipy",
-    "ipykernel",
 ]
 
 [build-system]
