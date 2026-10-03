@@ -15,7 +15,8 @@ Available distance-based metrics:
 
 For convenience, `MeshMetrics` also includes implementations of the **Dice similarity coefficient** (DSC) and **intersection over union** (IoU).
 
-![overview](./data/paper_overview.png)
+![Distances between two heart segmentations, computed on their meshes](./data/mesh_distances_heart.png)
+*Distances between two segmentations of the heart, computed from the boundary elements of one mesh to the surface of the other (left: red → blue, right: blue → red).*
 
 If you use `MeshMetrics` in your work, please cite:
 ```
@@ -133,3 +134,13 @@ dist_metrics = DistanceMetrics()
 dist_metrics.set_input(ref=ref_np, pred=pred_np, spacing=spacing)
 # ... follow the same procedure as before
 ```
+
+## Implementation pitfalls of distance-based metrics
+Distance-based metrics are well defined mathematically, but their implementations are not. Open-source tools differ in how they extract the segmentation boundary from a mask, whether they weight distances by the size of the corresponding boundary elements, how they compute percentiles, and how they handle the pixel/voxel size and empty masks. As a result, different tools report different values for the same metric on the same pair of segmentations, and the differences are far from negligible: in our analysis of 11 open-source tools, they exceeded 100 mm for HD<sub>p</sub>, 40 mm for MASD, 20 mm for ASSD, and 30 percentage points for NSD and BIoU. Values computed with different tools are therefore generally not comparable, for example when comparing your results with those reported in the literature.
+
+![Overview of the analysis of open-source tools](./data/paper_overview.png)
+
+For details, see:
+- G. Podobnik, T. Vrtovec. [_Understanding Implementation Pitfalls of Distance-Based Metrics for Image Segmentation_](https://doi.org/10.48550/arXiv.2410.02630), arXiv:2410.02630, 2025.
+- G. Podobnik, T. Vrtovec. [_HDilemma: Are Open-Source Hausdorff Distance Implementations Equivalent?_](https://link.springer.com/chapter/10.1007/978-3-031-72114-4_30), MICCAI 2024.
+- G. Podobnik, T. Vrtovec. [_MeshMetrics: A Precise Implementation of Distance-Based Image Segmentation Metrics_](https://doi.org/10.48550/arXiv.2509.05670), arXiv:2509.05670, 2025.
