@@ -310,6 +310,8 @@ def vtk_measurements_2D(
     pred_contour: vtk.vtkPolyData,
     ref_sitk: sitk.Image,
     pred_sitk: sitk.Image,
+    ref_surface: vtk.vtkPolyData = None,
+    pred_surface: vtk.vtkPolyData = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Compute bidirectional distances between contour centroids and the opposing surface.
 
@@ -333,8 +335,11 @@ def vtk_measurements_2D(
         from ref to pred mesh and ref segment lengths, and vice-versa
     """
     # fmt: off
-    # extrude 2D contours of the masks into open surfaces
-    ref_surface, pred_surface = vtk_2D_mask_surface(ref_sitk), vtk_2D_mask_surface(pred_sitk)
+    # extrude 2D contours of the masks into open surfaces (unless given)
+    if ref_surface is None:
+        ref_surface = vtk_2D_mask_surface(ref_sitk)
+    if pred_surface is None:
+        pred_surface = vtk_2D_mask_surface(pred_sitk)
 
     # compute distances between contour centroids and opposing surface
     dists_ref2pred, segment_lengths_ref = vtk_2D_centroid2surface_dist_length(ref_contour, pred_surface)
@@ -496,6 +501,8 @@ def vtk_mask_distance_field(
     mask_sitk: sitk.Image,
     mesh_vtk: vtk.vtkPolyData = None,
     max_dist: float = None,
+    contour_2d: vtk.vtkPolyData = None,
+    surface_2d: vtk.vtkPolyData = None,
 ) -> np.ndarray:
     """Distance from each foreground voxel centre of a binary mask to its surface.
 
@@ -506,6 +513,9 @@ def vtk_mask_distance_field(
         max_dist: If given, exact distances are only computed for voxels that may be closer
             than ``max_dist`` to the surface (see ``mesh_distance_lower_bound``); the
             remaining foreground voxels are set to ``np.inf``.
+        contour_2d, surface_2d: For 2D masks, the precomputed contour of the mask
+            (``vtk_2D_meshing(mask_sitk)``) and its extrusion (``vtk_2D_mask_surface``), to
+            avoid recomputing them.
 
     Returns:
         np.ndarray (``sitk2np`` axis order): distances for foreground voxels, 0 for background.
@@ -516,8 +526,8 @@ def vtk_mask_distance_field(
     if ndim == 2:
         # distances to the contour, measured in the z=0 plane of an extruded open surface;
         # the lower bound uses the contour directly (no subdivision of the extrusion)
-        bound_source = vtk_2D_meshing(mask_sitk, pad=True)
-        surface = _vtk_extrude_contour(bound_source)
+        bound_source = vtk_2D_meshing(mask_sitk, pad=True) if contour_2d is None else contour_2d
+        surface = _vtk_extrude_contour(bound_source) if surface_2d is None else surface_2d
     else:
         surface = vtk_meshing(mask_sitk) if mesh_vtk is None else mesh_vtk
         bound_source = surface

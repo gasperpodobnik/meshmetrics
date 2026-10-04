@@ -15,6 +15,8 @@ from .utils import (
     vtk_measurements_2D,
     vtk_measurements_3D,
     vtk_mask_distance_field,
+    vtk_2D_meshing,
+    _vtk_extrude_contour,
     vtk_voxelizer,
     vtk_is_mesh_closed,
     vtk_meshes_bbox_sitk_image,
@@ -246,6 +248,8 @@ class DistanceMetrics:
                 setattr(self, f"_{name}_{kind}", None)
         # BIoU distance fields: (max_dist, ref_field, pred_field)
         self._dist_fields = None
+        # whether `{ref,pred}_vtk` was created from the mask (then it is the mask's contour)
+        self._ref_vtk_from_mask = self._pred_vtk_from_mask = False
         for name, attr in vars(type(self)).items():
             if isinstance(attr, cached_property):
                 self.__dict__.pop(name, None)
@@ -356,6 +360,7 @@ class DistanceMetrics:
                     sitk_attr
                 ), f"mask must be the same object as `{name}_sitk`"
             setattr(self, attr, vtk_meshing(sitk_attr))
+            setattr(self, f"_{name}_vtk_from_mask", True)
 
         elif isinstance(value, RUNTIME_MESH_TYPES):
             if isinstance(value, vtk.vtkPolyData):
@@ -439,11 +444,14 @@ class DistanceMetrics:
         if self.ref_is_empty or self.pred_is_empty:
             return None
         elif self.n_dim == 2:
+            ref_surface, pred_surface = self._mask_surfaces_2d
             d_ref2pred, b_ref, d_pred2ref, b_pred = vtk_measurements_2D(
                 ref_contour=self.ref_vtk,
                 pred_contour=self.pred_vtk,
                 ref_sitk=self.ref_sitk,
                 pred_sitk=self.pred_sitk,
+                ref_surface=ref_surface,
+                pred_surface=pred_surface,
             )
         elif self.n_dim == 3:
             d_ref2pred, b_ref, d_pred2ref, b_pred = vtk_measurements_3D(
@@ -455,6 +463,22 @@ class DistanceMetrics:
 
         return d_ref2pred, b_ref, d_pred2ref, b_pred
 
+    @cached_property
+    def _mask_contours_2d(self) -> Tuple[vtk.vtkPolyData, vtk.vtkPolyData]:
+        """2D contours of the ref and pred masks, created once (reuses `{name}_vtk` if it
+        was created from the mask)."""
+        return tuple(
+            getattr(self, f"{name}_vtk")
+            if getattr(self, f"_{name}_vtk_from_mask")
+            else vtk_2D_meshing(getattr(self, f"{name}_sitk"))
+            for name in ("ref", "pred")
+        )
+
+    @cached_property
+    def _mask_surfaces_2d(self) -> Tuple[vtk.vtkPolyData, vtk.vtkPolyData]:
+        """Extruded 2D mask contours, the targets of 2D distances (created once)."""
+        return tuple(_vtk_extrude_contour(c) for c in self._mask_contours_2d)
+
     def _dist_fields_within(self, max_dist: float) -> Tuple[np.ndarray, np.ndarray]:
         """Distance fields of ref and pred foreground voxels to their own surface.
 
@@ -463,13 +487,21 @@ class DistanceMetrics:
         smaller `max_dist`.
         """
         if self._dist_fields is None or self._dist_fields[0] < max_dist:
+            if self.n_dim == 2:
+                extra = [
+                    dict(contour_2d=c, surface_2d=s)
+                    for c, s in zip(self._mask_contours_2d, self._mask_surfaces_2d)
+                ]
+            else:
+                extra = [{}, {}]
             fields = tuple(
                 vtk_mask_distance_field(
                     getattr(self, f"{name}_sitk"),
                     getattr(self, f"{name}_vtk"),
                     max_dist=max_dist,
+                    **kw,
                 )
-                for name in ("ref", "pred")
+                for name, kw in zip(("ref", "pred"), extra)
             )
             self._dist_fields = (max_dist, *fields)
         return self._dist_fields[1:]
