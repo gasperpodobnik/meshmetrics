@@ -1,6 +1,6 @@
 [project]
 name = "pymeshmetrics"
-version = "1.1.0"
+version = "1.1.1"
 description = "Library to compute distance-based performance metrics for image segmentation tasks."
 readme = "README.md"
 license = "Apache-2.0"
