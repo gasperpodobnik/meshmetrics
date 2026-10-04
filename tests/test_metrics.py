@@ -7,7 +7,7 @@ import pytest
 import SimpleITK as sitk
 from scipy.spatial.transform import Rotation as R
 
-from meshmetrics import DistanceMetrics, np2sitk, vtk_meshing
+from meshmetrics import DistanceMetrics, np2sitk, vtk_meshing, vtk_voxelizer
 
 A = np.zeros((30, 30, 30), bool)
 A[8:20, 10:22, 5:25] = True
@@ -342,3 +342,58 @@ def test_crop_to_foreground():
     arr[0:3, 4:6] = True
     (c,) = crop_np_to_foreground([arr], margin=2)
     assert c.shape == (5, 6) and c.sum() == arr.sum()
+
+
+def _circle_contour(radius, n=720, polyline=False):
+    import vtk
+
+    pts, lines = vtk.vtkPoints(), vtk.vtkCellArray()
+    for t in np.linspace(0, 2 * np.pi, n, endpoint=False):
+        pts.InsertNextPoint(radius * np.cos(t), radius * np.sin(t), 0.0)
+    if polyline:  # one closed polyline instead of 2-point segments
+        lines.InsertNextCell(n + 1, list(range(n)) + [0])
+    else:
+        for i in range(n):
+            lines.InsertNextCell(2, [i, (i + 1) % n])
+    poly = vtk.vtkPolyData()
+    poly.SetPoints(pts)
+    poly.SetLines(lines)
+    return poly
+
+
+@pytest.mark.parametrize("spacing", [1.0, 0.5, 0.25])
+@pytest.mark.parametrize("polyline", [False, True])
+def test_2D_contour_inputs_exact(spacing, polyline):
+    """Concentric circles (r = 10, 12): all distances are 2, independent of the grid spacing."""
+    m = DistanceMetrics()
+    m.set_input(
+        _circle_contour(10, polyline=polyline), _circle_contour(12, polyline=polyline), spacing=(spacing, spacing)
+    )
+    for value in (m.hd(), m.hd(95), m.masd(), m.assd()):
+        assert value == pytest.approx(2.0, abs=1e-3)  # inscribed 720-gons
+    assert m.nsd(2.5) == pytest.approx(1.0)
+    assert m.nsd(1.5) == pytest.approx(0.0)
+
+
+def test_2D_contour_biou_close_to_analytic():
+    """BIoU of concentric circles: annuli (r - tau, r], computed on a fine grid."""
+    tau, r1, r2 = 2.5, 10.0, 12.0
+    inter = np.pi * (r1**2 - (r2 - tau) ** 2)
+    union = np.pi * (r1**2 - (r1 - tau) ** 2) + np.pi * (r2**2 - (r2 - tau) ** 2) - inter
+    m = DistanceMetrics()
+    m.set_input(_circle_contour(r1), _circle_contour(r2), spacing=(0.1, 0.1))
+    assert m.biou(tau) == pytest.approx(inter / union, abs=0.005)
+
+
+def test_2D_mixed_image_and_contour():
+    """Image + contour input measures to the given contour."""
+    spacing = 0.25
+    contour = _circle_contour(12)
+    img = vtk_voxelizer(contour, spacing=(spacing, spacing))  # defines the grid
+    exact = DistanceMetrics()
+    exact.set_input(_circle_contour(10), contour, spacing=(spacing, spacing))
+    m = DistanceMetrics()
+    m.set_input(vtk_voxelizer(_circle_contour(10), img), contour)
+    # the image side is a voxelized circle, so it deviates from r = 10 by up to half a pixel
+    assert m.hd() == pytest.approx(exact.hd(), abs=spacing)
+    assert m.masd() == pytest.approx(exact.masd(), abs=spacing / 2)

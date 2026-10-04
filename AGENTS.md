@@ -52,8 +52,8 @@ uv run pytest          # full test suite (about 1 min)
 - **Geometry:** always handle the image direction matrix. World coordinates are
   `origin + (index * spacing) @ direction.T` (see `index2world`). Test new geometry code on
   rotated, anisotropic, non-cubic grids, because identity directions and cubic grids hide bugs.
-- **2D:** contours lie in the z = 0 plane. Distances to 2D boundaries use the contour extruded
-  along z (`vtk_2D_mask_surface`).
+- **2D:** contours lie in the z = 0 plane. Distances are measured to the contour (the given
+  one for mesh inputs, the mask's otherwise) extruded along z, as 3D measures to the mesh.
 - **Cropping:** `set_input` crops masks to the bounding box of their foreground (and of the
   mesh, for mixed inputs) plus one pixel/voxel, via `crop_to_foreground` /
   `crop_np_to_foreground`. Results do not depend on the image size; `ref_sitk` etc. hold the

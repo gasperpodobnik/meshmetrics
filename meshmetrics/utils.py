@@ -250,6 +250,18 @@ def vtk_2D_mask_surface(mask_sitk: sitk.Image) -> vtk.vtkPolyData:
     return _vtk_extrude_contour(vtk_2D_meshing(mask_sitk, pad=True))
 
 
+def vtk_contour_segments(contour: vtk.vtkPolyData) -> vtk.vtkPolyData:
+    """Return the 2D contour with all polylines split into 2-point line segments."""
+    lines = contour.GetLines()
+    if lines is None or lines.GetNumberOfCells() == 0 or lines.GetMaxCellSize() <= 2:
+        return contour
+    split = vtk.vtkTriangleFilter()  # breaks polylines into line segments
+    split.SetInputData(contour)
+    split.PassVertsOff()
+    split.Update()
+    return split.GetOutput()
+
+
 def _vtk_extrude_contour(contour: vtk.vtkPolyData) -> vtk.vtkPolyData:
     """Extrude a 2D contour (z=0) along z from -0.5 to 0.5 into a triangulated open surface."""
     if contour.GetNumberOfCells() == 0:
