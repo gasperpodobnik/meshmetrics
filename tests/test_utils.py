@@ -272,11 +272,15 @@ def test_mesh_distance_lower_bound(kind, seed):
     mesh, mask = surface_and_mask(kind, seed)
     exact = vtk_mask_distance_field(mask, mesh)
     fg = sitk2np(mask) > 0
-    surface = mesh if mask.GetDimension() == 3 else vtk_2D_mask_surface(mask)
-    for max_dist in [0.5, 1.0, 3.0]:
-        bound = mesh_distance_lower_bound(surface, mask, max_dist)
-        near = fg & (exact < max_dist)
-        assert np.all(bound[near] <= exact[near] + 1e-6)
+    if mask.GetDimension() == 3:
+        sources = [mesh]
+    else:  # extruded surface (subdivided) and the contour itself (no subdivision)
+        sources = [vtk_2D_mask_surface(mask), vtk_2D_meshing(mask)]
+    for source in sources:
+        for max_dist in [0.5, 1.0, 3.0]:
+            bound = mesh_distance_lower_bound(source, mask, max_dist)
+            near = fg & (exact < max_dist)
+            assert np.all(bound[near] <= exact[near] + 1e-6)
 
 
 def test_slot_mesh_needs_mesh_based_bound():

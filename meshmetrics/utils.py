@@ -247,7 +247,11 @@ def vtk_2D_mask_surface(mask_sitk: sitk.Image) -> vtk.vtkPolyData:
     surface equal the in-plane distances to the contour. The contour is created with padding,
     as in `vtk_meshing`, so masks touching the image border have a closed boundary (as in 3D).
     """
-    contour = vtk_2D_meshing(mask_sitk, pad=True)
+    return _vtk_extrude_contour(vtk_2D_meshing(mask_sitk, pad=True))
+
+
+def _vtk_extrude_contour(contour: vtk.vtkPolyData) -> vtk.vtkPolyData:
+    """Extrude a 2D contour (z=0) along z from -0.5 to 0.5 into a triangulated open surface."""
     if contour.GetNumberOfCells() == 0:
         return vtk.vtkPolyData()
 
@@ -426,11 +430,12 @@ def mesh_distance_lower_bound(
 ) -> np.ndarray:
     """Lower bound on the distance from each voxel centre of `meta_sitk` to `surface`.
 
-    Valid for any surface. The surface is subdivided until all triangle edges are at most
-    ``L`` (the smallest voxel spacing), so every surface point is within ``L`` of a mesh
-    vertex. Each vertex is snapped to its nearest voxel centre (moving it by at most half a
-    voxel diagonal), and a Euclidean distance transform gives the distance from every
-    voxel centre to the nearest snapped vertex. Hence::
+    Valid for any surface, or for a 2D contour (line segments in the z=0 plane). Every
+    surface point is within ``L`` of a mesh vertex: for a contour, ``L`` is half the longest
+    segment; for a surface, the surface is subdivided until all triangle edges are at most
+    ``L`` (the smallest voxel spacing). Each vertex is snapped to its nearest voxel centre
+    (moving it by at most half a voxel diagonal), and a Euclidean distance transform gives the
+    distance from every voxel centre to the nearest snapped vertex. Hence::
 
         exact distance >= EDT - voxel_diagonal / 2 - L
 
@@ -443,23 +448,29 @@ def mesh_distance_lower_bound(
     origin = np.array(meta_sitk.GetOrigin())
     direction = np.array(meta_sitk.GetDirection()).reshape(ndim, ndim)
     size = np.array(meta_sitk.GetSize())
-    max_edge = spacing.min()
-    margin = np.linalg.norm(spacing) / 2 + max_edge
-
     if surface.GetNumberOfCells() == 0:
         return np.full(size, np.inf)
 
-    triangulate = vtk.vtkTriangleFilter()
-    triangulate.SetInputData(surface)
-    triangulate.PassLinesOff()
-    triangulate.PassVertsOff()
-    subdivide = vtk.vtkAdaptiveSubdivisionFilter()
-    subdivide.SetInputConnection(triangulate.GetOutputPort())
-    subdivide.SetMaximumEdgeLength(max_edge)
-    subdivide.SetMaximumTriangleArea(np.inf)
-    subdivide.SetMaximumNumberOfPasses(1000)
-    subdivide.Update()
-    pts = vtk_to_numpy(subdivide.GetOutput().GetPoints().GetData())[:, :ndim]
+    if surface.GetNumberOfPolys() == 0 and surface.GetNumberOfLines() > 0:
+        # contour: every point of a segment is within half its length of an endpoint
+        pts = vtk_to_numpy(surface.GetPoints().GetData()).astype(float)
+        segments = vtk_to_numpy(surface.GetLines().GetConnectivityArray()).reshape(-1, 2)
+        sample_error = np.linalg.norm(pts[segments[:, 1]] - pts[segments[:, 0]], axis=1).max() / 2
+        pts = pts[:, :ndim]
+    else:
+        sample_error = spacing.min()
+        triangulate = vtk.vtkTriangleFilter()
+        triangulate.SetInputData(surface)
+        triangulate.PassLinesOff()
+        triangulate.PassVertsOff()
+        subdivide = vtk.vtkAdaptiveSubdivisionFilter()
+        subdivide.SetInputConnection(triangulate.GetOutputPort())
+        subdivide.SetMaximumEdgeLength(sample_error)
+        subdivide.SetMaximumTriangleArea(np.inf)
+        subdivide.SetMaximumNumberOfPasses(1000)
+        subdivide.Update()
+        pts = vtk_to_numpy(subdivide.GetOutput().GetPoints().GetData())[:, :ndim]
+    margin = np.linalg.norm(spacing) / 2 + sample_error
 
     # world -> nearest voxel index on a grid padded by `pad` voxels; vertices outside the
     # padded grid are farther than max_dist from every voxel centre of the image
@@ -503,16 +514,17 @@ def vtk_mask_distance_field(
     mask_np = sitk2np(mask_sitk) > 0
 
     if ndim == 2:
-        # distances to the contour, measured in the z=0 plane of an extruded open surface
-        surface = vtk_2D_mask_surface(mask_sitk)
-    elif mesh_vtk is None:
-        surface = vtk_meshing(mask_sitk)
+        # distances to the contour, measured in the z=0 plane of an extruded open surface;
+        # the lower bound uses the contour directly (no subdivision of the extrusion)
+        bound_source = vtk_2D_meshing(mask_sitk, pad=True)
+        surface = _vtk_extrude_contour(bound_source)
     else:
-        surface = mesh_vtk
+        surface = vtk_meshing(mask_sitk) if mesh_vtk is None else mesh_vtk
+        bound_source = surface
 
     candidates = mask_np.copy()
     if max_dist is not None and np.isfinite(max_dist):
-        candidates &= mesh_distance_lower_bound(surface, mask_sitk, max_dist) < max_dist
+        candidates &= mesh_distance_lower_bound(bound_source, mask_sitk, max_dist) < max_dist
 
     pts = index2world(
         np.argwhere(candidates),
