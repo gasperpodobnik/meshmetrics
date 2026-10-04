@@ -449,10 +449,12 @@ def mesh_distance_lower_bound(
 
     Valid for any surface, or for a 2D contour (line segments in the z=0 plane). Every
     surface point is within ``L`` of a mesh vertex: for a contour, ``L`` is half the longest
-    segment; for a surface, the surface is subdivided until all triangle edges are at most
-    ``L`` (the smallest voxel spacing). Each vertex is snapped to its nearest voxel centre
-    (moving it by at most half a voxel diagonal), and a Euclidean distance transform gives the
-    distance from every voxel centre to the nearest snapped vertex. Hence::
+    segment; for a surface, ``L`` is the longest triangle edge divided by sqrt(3) (every point
+    of a triangle lies within that distance of one of its vertices; equality for equilateral
+    triangles).
+    Each vertex is snapped to its nearest voxel centre (moving it by at most half a voxel
+    diagonal), and a Euclidean distance transform gives the distance from every voxel centre
+    to the nearest snapped vertex. Hence::
 
         exact distance >= EDT - voxel_diagonal / 2 - L
 
@@ -473,20 +475,19 @@ def mesh_distance_lower_bound(
         pts = vtk_to_numpy(surface.GetPoints().GetData()).astype(float)
         segments = vtk_to_numpy(surface.GetLines().GetConnectivityArray()).reshape(-1, 2)
         sample_error = np.linalg.norm(pts[segments[:, 1]] - pts[segments[:, 0]], axis=1).max() / 2
-        pts = pts[:, :ndim]
     else:
-        sample_error = spacing.min()
-        triangulate = vtk.vtkTriangleFilter()
+        # surface: every point of a triangle is within (longest edge) / sqrt(3) of a vertex
+        triangulate = vtk.vtkTriangleFilter()  # only splits polygons into triangles
         triangulate.SetInputData(surface)
         triangulate.PassLinesOff()
         triangulate.PassVertsOff()
-        subdivide = vtk.vtkAdaptiveSubdivisionFilter()
-        subdivide.SetInputConnection(triangulate.GetOutputPort())
-        subdivide.SetMaximumEdgeLength(sample_error)
-        subdivide.SetMaximumTriangleArea(np.inf)
-        subdivide.SetMaximumNumberOfPasses(1000)
-        subdivide.Update()
-        pts = vtk_to_numpy(subdivide.GetOutput().GetPoints().GetData())[:, :ndim]
+        triangulate.Update()
+        tri_mesh = triangulate.GetOutput()
+        pts = vtk_to_numpy(tri_mesh.GetPoints().GetData()).astype(float)
+        tris = vtk_to_numpy(tri_mesh.GetPolys().GetConnectivityArray()).reshape(-1, 3)
+        edges = pts[tris] - pts[np.roll(tris, -1, axis=1)]
+        sample_error = np.linalg.norm(edges, axis=2).max() / np.sqrt(3)
+    pts = pts[:, :ndim]
     margin = np.linalg.norm(spacing) / 2 + sample_error
 
     # world -> nearest voxel index on a grid padded by `pad` voxels; vertices outside the
