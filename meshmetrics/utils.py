@@ -735,6 +735,72 @@ def vtk_points_outside_image(mesh_vtk: vtk.vtkPolyData, meta_sitk: sitk.Image) -
     return bool(np.any(idx < -0.5) or np.any(idx > size - 0.5))
 
 
+def sitk_foreground_index_bounds(img: sitk.Image) -> Union[Tuple[np.ndarray, np.ndarray], None]:
+    """Index bounds (lo, hi; inclusive, in (x, y[, z]) order) of the foreground (> 0), or None
+    if it is empty."""
+    fg = sitk.GetArrayViewFromImage(img) > 0  # (z, y, x) order
+    if not fg.any():
+        return None
+    lo, hi = [], []
+    for axis in range(fg.ndim):
+        nonzero = np.flatnonzero(fg.any(axis=tuple(i for i in range(fg.ndim) if i != axis)))
+        lo.append(nonzero[0])
+        hi.append(nonzero[-1])
+    return np.array(lo[::-1]), np.array(hi[::-1])
+
+
+def vtk_mesh_index_bounds(
+    mesh_vtk: vtk.vtkPolyData, meta_sitk: sitk.Image
+) -> Union[Tuple[np.ndarray, np.ndarray], None]:
+    """Index bounds (lo, hi; inclusive) on the grid of `meta_sitk` that enclose all mesh
+    points, or None for an empty mesh. Bounds may lie outside the image."""
+    if mesh_vtk.GetNumberOfPoints() == 0:
+        return None
+    ndim = meta_sitk.GetDimension()
+    pts = vtk_to_numpy(mesh_vtk.GetPoints().GetData())[:, :ndim]
+    direction = np.array(meta_sitk.GetDirection()).reshape(ndim, ndim)
+    origin, spacing = np.array(meta_sitk.GetOrigin()), np.array(meta_sitk.GetSpacing())
+    idx = ((pts - origin) @ direction) / spacing  # world -> continuous index
+    return np.floor(idx.min(axis=0)).astype(int), np.ceil(idx.max(axis=0)).astype(int)
+
+
+def crop_to_foreground(
+    images: Sequence[sitk.Image],
+    margin: int = 1,
+    extra_bounds: Sequence[Tuple[np.ndarray, np.ndarray]] = (),
+) -> list:
+    """Crop images on the same grid to the union of their foreground (and `extra_bounds`),
+    plus `margin` pixels/voxels, clipped to the image. The physical position is preserved.
+
+    Images are returned unchanged if everything is empty or the crop would cover the image.
+    """
+    bounds = [b for b in (sitk_foreground_index_bounds(img) for img in images) if b is not None]
+    bounds += [b for b in extra_bounds if b is not None]
+    if not bounds:
+        return list(images)
+    size = np.array(images[0].GetSize())
+    lo = np.maximum(np.min([b[0] for b in bounds], axis=0) - margin, 0)
+    hi = np.minimum(np.max([b[1] for b in bounds], axis=0) + margin, size - 1)
+    if np.all(lo == 0) and np.all(hi == size - 1):
+        return list(images)
+    roi_size = (hi - lo + 1).tolist()
+    return [sitk.RegionOfInterest(img, roi_size, lo.tolist()) for img in images]
+
+
+def crop_np_to_foreground(arrays: Sequence[np.ndarray], margin: int = 1) -> list:
+    """Crop numpy masks of the same shape to the union of their foreground plus `margin`."""
+    union = np.zeros(arrays[0].shape, bool)
+    for a in arrays:
+        union |= a.astype(bool)
+    if not union.any():
+        return list(arrays)
+    slices = []
+    for axis in range(union.ndim):
+        nonzero = np.flatnonzero(union.any(axis=tuple(i for i in range(union.ndim) if i != axis)))
+        slices.append(slice(max(nonzero[0] - margin, 0), min(nonzero[-1] + margin + 1, union.shape[axis])))
+    return [a[tuple(slices)] for a in arrays]
+
+
 def vtk_meshes_bbox_sitk_image(
     meshes: Union[vtk.vtkPolyData, Sequence[vtk.vtkPolyData]],
     spacing: tuple,

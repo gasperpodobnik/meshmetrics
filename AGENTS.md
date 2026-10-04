@@ -54,6 +54,10 @@ uv run pytest          # full test suite (about 1 min)
   rotated, anisotropic, non-cubic grids, because identity directions and cubic grids hide bugs.
 - **2D:** contours lie in the z = 0 plane. Distances to 2D boundaries use the contour extruded
   along z (`vtk_2D_mask_surface`).
+- **Cropping:** `set_input` crops masks to the bounding box of their foreground (and of the
+  mesh, for mixed inputs) plus one pixel/voxel, via `crop_to_foreground` /
+  `crop_np_to_foreground`. Results do not depend on the image size; `ref_sitk` etc. hold the
+  cropped masks.
 - **BIoU** is computed on the grid, with exact distances only near the boundary (a provable
   lower bound selects the voxels). It raises `ValueError` when `tau` is too small for any
   boundary voxel.

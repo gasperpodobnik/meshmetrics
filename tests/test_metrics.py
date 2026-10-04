@@ -74,10 +74,16 @@ def test_mixed_input_keeps_image_grid(mesh_side):
     m = DistanceMetrics()
     if mesh_side == "pred":
         m.set_input(img_a, vtk_meshing(img_b))
-        assert m.ref_sitk is img_a
+        given, kept = img_a, m.ref_sitk
     else:
         m.set_input(vtk_meshing(img_a), img_b)
-        assert m.pred_sitk is img_b
+        given, kept = img_b, m.pred_sitk
+    # the image grid is kept (cropped): same spacing/direction, voxel centres on the given grid
+    assert kept.GetSpacing() == given.GetSpacing()
+    assert kept.GetDirection() == given.GetDirection()
+    start = given.TransformPhysicalPointToContinuousIndex(kept.GetOrigin())
+    np.testing.assert_allclose(start, np.round(start), atol=1e-9)
+    assert sitk.GetArrayFromImage(kept).sum() == sitk.GetArrayFromImage(given).sum()
     res = all_metrics(m)
     for k in expected:
         assert res[k] == pytest.approx(expected[k]), k
@@ -288,3 +294,51 @@ def test_identical_masks_touching_image_border(ndim, touch):
     assert m.nsd(1.0) == pytest.approx(1.0)
     assert m.biou(1.0) == pytest.approx(1.0)
     assert m.dsc() == pytest.approx(1.0)
+
+
+def _embed(mask, shape, offset):
+    big = np.zeros(shape, mask.dtype)
+    big[tuple(slice(o, o + n) for o, n in zip(offset, mask.shape))] = mask
+    return big
+
+
+@pytest.mark.parametrize("ndim", [2, 3])
+def test_results_independent_of_image_size(ndim):
+    """Masks are cropped internally: embedding them in a larger image changes nothing."""
+    a = A if ndim == 3 else A[:, :, 12]
+    b = B if ndim == 3 else B[:, :, 12]
+    spacing = (0.8, 1.0, 1.3)[:ndim]
+    direction = R.random(random_state=1).as_matrix() if ndim == 3 else np.array([[0.6, -0.8], [0.8, 0.6]])
+    results = []
+    for shape, offset in [(a.shape, (0,) * ndim), ((70, 55, 64)[:ndim], (21, 7, 30)[:ndim])]:
+        imgs = [to_image(_embed(x, shape, offset), spacing, (0.0,) * ndim, direction) for x in (a, b)]
+        m = DistanceMetrics()
+        m.set_input(*imgs)
+        # tau=1.73: box masks on these grids have many distances exactly at round values
+        # (e.g. 1.0, 1.5), where rounding decides whether `distance <= tau`
+        results.append(all_metrics(m, tau=1.73))
+    for k in results[0]:
+        assert results[1][k] == pytest.approx(results[0][k], abs=1e-5), k
+
+
+def test_crop_to_foreground():
+    from meshmetrics.utils import crop_np_to_foreground, crop_to_foreground
+
+    big = _embed(A.astype(np.uint8), (70, 55, 64), (21, 7, 30))
+    img = to_image(big, (0.8, 1.0, 1.3), (5.0, -3.0, 2.0), R.random(random_state=2).as_matrix())
+    (cropped,) = crop_to_foreground([img], margin=1)
+    # sitk2np order (x, y, z): A's foreground spans [8,20) x [10,22) x [5,25), shifted by the offset
+    assert cropped.GetSize() == (12 + 2, 12 + 2, 20 + 2)
+    assert sitk.GetArrayFromImage(cropped).sum() == big.sum()
+    # physical position of the voxels is preserved
+    np.testing.assert_allclose(cropped.GetOrigin(), img.TransformIndexToPhysicalPoint((21 + 8 - 1, 7 + 10 - 1, 30 + 5 - 1)))
+    # empty masks and masks filling the image are returned unchanged
+    empty = to_image(np.zeros((5, 6, 7), bool))
+    assert crop_to_foreground([empty])[0] is empty
+    full = to_image(np.ones((5, 6, 7), bool))
+    assert crop_to_foreground([full])[0] is full
+    # numpy: margin is clipped at the array border
+    arr = np.zeros((10, 10), bool)
+    arr[0:3, 4:6] = True
+    (c,) = crop_np_to_foreground([arr], margin=2)
+    assert c.shape == (5, 6) and c.sum() == arr.sum()

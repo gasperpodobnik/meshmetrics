@@ -21,6 +21,9 @@ from .utils import (
     vtk_is_mesh_closed,
     vtk_meshes_bbox_sitk_image,
     vtk_points_outside_image,
+    vtk_mesh_index_bounds,
+    crop_to_foreground,
+    crop_np_to_foreground,
     trimesh_to_vtk,
     meshio_to_vtk,
 )
@@ -73,6 +76,12 @@ class DistanceMetrics:
             - For all other combinations (`ref` is SimpleITK image and `pred` is mesh type or vice versa),
             the spacing will be inferred from the SimpleITK image input and should not be provided.
             The input mesh should be in world coordinates.
+
+            - Masks (numpy arrays and SimpleITK images) are cropped to the bounding box of their
+            foreground (and of the mesh, for mixed inputs) plus one pixel/voxel, which speeds up
+            the computation without changing the results. `ref_sitk`, `pred_sitk`, `ref_np` and
+            `pred_np` therefore hold the cropped masks (SimpleITK images keep their physical
+            position).
         """
         self.clear_cache()
 
@@ -128,6 +137,7 @@ class DistanceMetrics:
             ref.ndim == pred.ndim == len(spacing)
         ), "masks and spacing must all have the same dimensionality"
         assert ref.shape == pred.shape, "masks must have the same shape"
+        ref, pred = crop_np_to_foreground([ref, pred])
 
         self.ref_np = ref
         self.pred_np = pred
@@ -155,6 +165,7 @@ class DistanceMetrics:
         assert np.allclose(
             ref.GetDirection(), pred.GetDirection()
         ), "input mask direction must be the same"
+        ref, pred = crop_to_foreground([ref, pred])
 
         self.ref_sitk = ref
         self.pred_sitk = pred
@@ -216,15 +227,13 @@ class DistanceMetrics:
     ):
         """One input is a SimpleITK image and the other a mesh (in world coordinates).
 
-        The image grid is kept as is and the mesh is voxelized onto it.
+        The image grid is kept (cropped to the image foreground and the mesh) and the mesh is
+        voxelized onto it.
         """
         self.clear_cache()
         self.spacing = img.GetSpacing()
 
-        setattr(self, f"{img_name}_sitk", img)
-        setattr(self, f"{img_name}_np", img)
-        setattr(self, f"{img_name}_vtk", img)
-
+        # convert the mesh first, so that the image can be cropped to include it
         setattr(self, f"{mesh_name}_vtk", mesh)
         mesh_vtk = getattr(self, f"{mesh_name}_vtk")
         if vtk_points_outside_image(mesh_vtk, img):
@@ -232,6 +241,12 @@ class DistanceMetrics:
                 f"`{mesh_name}` mesh extends beyond the `{img_name}` image grid; "
                 "the part outside is clipped in grid-based metrics (DSC, IoU, BIoU)"
             )
+        (img,) = crop_to_foreground([img], extra_bounds=[vtk_mesh_index_bounds(mesh_vtk, img)])
+
+        setattr(self, f"{img_name}_sitk", img)
+        setattr(self, f"{img_name}_np", img)
+        setattr(self, f"{img_name}_vtk", img)
+
         mesh_sitk = vtk_voxelizer(mesh_vtk, img)
         setattr(self, f"{mesh_name}_sitk", mesh_sitk)
         setattr(self, f"{mesh_name}_np", mesh_sitk)
