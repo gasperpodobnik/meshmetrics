@@ -1,5 +1,11 @@
 # MeshMetrics
+[![arXiv](https://img.shields.io/badge/arXiv-2509.05670-b31b1b.svg)](https://doi.org/10.48550/arXiv.2509.05670)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.16896595.svg)](https://doi.org/10.5281/zenodo.16896595)
+[![PyPI](https://img.shields.io/pypi/v/pymeshmetrics)](https://pypi.org/project/pymeshmetrics/)
+[![Python](https://img.shields.io/python/required-version-toml?tomlFilePath=https://raw.githubusercontent.com/gasperpodobnik/meshmetrics/main/pyproject.toml)](https://pypi.org/project/pymeshmetrics/)
+[![Tests](https://github.com/gasperpodobnik/meshmetrics/actions/workflows/tests.yml/badge.svg)](https://github.com/gasperpodobnik/meshmetrics/actions/workflows/tests.yml)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+
 > Official Python-based implementation of `MeshMetrics` from [_MeshMetrics: A Precise Implementation of Distance-Based Image Segmentation Metrics_](https://doi.org/10.48550/arXiv.2509.05670), motivated by the implementation pitfalls identified in [_Understanding Implementation Pitfalls of Distance-Based Metrics for Image Segmentation_](https://doi.org/10.48550/arXiv.2410.02630) and [_HDilemma: Are Open-Source Hausdorff Distance Implementations Equivalent?_](https://link.springer.com/chapter/10.1007/978-3-031-72114-4_30)
 
 ## About
