@@ -11,6 +11,7 @@ authors:
     family-names: Vrtovec
     affiliation: "University of Ljubljana, Faculty of Electrical Engineering"
     orcid: "https://orcid.org/0000-0002-6625-0307"
+doi: "10.5281/zenodo.16896595"  # Zenodo concept DOI (all versions)
 repository-code: "https://github.com/gasperpodobnik/meshmetrics"
 url: "https://pypi.org/project/pymeshmetrics/"
 license: Apache-2.0

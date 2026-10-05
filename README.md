@@ -1,4 +1,5 @@
 # MeshMetrics
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.16896595.svg)](https://doi.org/10.5281/zenodo.16896595)
 > Official Python-based implementation of `MeshMetrics` from [_MeshMetrics: A Precise Implementation of Distance-Based Image Segmentation Metrics_](https://doi.org/10.48550/arXiv.2509.05670), motivated by the implementation pitfalls identified in [_Understanding Implementation Pitfalls of Distance-Based Metrics for Image Segmentation_](https://doi.org/10.48550/arXiv.2410.02630) and [_HDilemma: Are Open-Source Hausdorff Distance Implementations Equivalent?_](https://link.springer.com/chapter/10.1007/978-3-031-72114-4_30)
 
 ## About
