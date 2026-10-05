@@ -1,6 +1,6 @@
 from importlib.metadata import PackageNotFoundError, version
 
-from .metrics import DistanceMetrics, compute_metrics
+from .metrics import DistanceMetrics, compute_metrics, compute_metrics_multilabel
 from .utils import (
     # conversion
     np2sitk,
@@ -34,6 +34,7 @@ except PackageNotFoundError:
 __all__ = [
     "DistanceMetrics",
     "compute_metrics",
+    "compute_metrics_multilabel",
     "np2sitk",
     "sitk2np",
     "to_sitk",

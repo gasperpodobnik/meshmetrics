@@ -11,9 +11,11 @@ SimpleITK images, VTK/trimesh/meshio meshes, or a mix.
 - **Names:** the PyPI package is `pymeshmetrics` (`pip install pymeshmetrics`), but the import
   is `import meshmetrics`. `MeshMetrics.py` is a deprecated alias for the old
   `import MeshMetrics`; do not add code to it.
-- **Main API:** `compute_metrics(ref, pred, spacing=None, taus=(), ...)` for one-call use, and
+- **Main API:** `compute_metrics(ref, pred, spacing=None, taus=(), ...)` for one-call use,
+  `compute_metrics_multilabel(ref_labels, pred_labels, ..., n_jobs=1)` for label maps (one
+  result dict per label; labels are cropped in one pass and can run in parallel), and
   the `DistanceMetrics` class (`set_input`, then `hd()`, `masd()`, `assd()`, `nsd(tau)`,
-  `biou(tau)`, `dsc()`, `iou()`). Both are in `meshmetrics/metrics.py`; helpers are in
+  `biou(tau)`, `dsc()`, `iou()`). All are in `meshmetrics/metrics.py`; helpers are in
   `meshmetrics/utils.py` and re-exported from `meshmetrics/__init__.py`.
 
 ## Useful utilities

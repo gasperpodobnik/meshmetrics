@@ -874,6 +874,116 @@ def compute_metrics(
     return results
 
 
+def _label_bounding_boxes(label_img: sitk.Image) -> Dict[int, Tuple[np.ndarray, np.ndarray]]:
+    """Index bounds (lo, hi; inclusive) of every non-zero label, in a single pass."""
+    stats = sitk.LabelShapeStatisticsImageFilter()
+    stats.ComputePerimeterOff()
+    stats.ComputeFeretDiameterOff()
+    stats.ComputeOrientedBoundingBoxOff()
+    stats.Execute(sitk.Cast(label_img, sitk.sitkUInt32))
+    ndim = label_img.GetDimension()
+    boxes = {}
+    for label in stats.GetLabels():
+        bbox = np.array(stats.GetBoundingBox(label))
+        boxes[int(label)] = (bbox[:ndim], bbox[:ndim] + bbox[ndim:] - 1)
+    return boxes
+
+
+def _compute_metrics_for_label(job: tuple) -> Dict[str, Union[float, bool]]:
+    """Worker: rebuild the cropped binary masks of one label and compute its metrics."""
+    ref_np, pred_np, spacing, origin, direction, kwargs = job
+    images = []
+    for arr in (ref_np, pred_np):
+        img = sitk.GetImageFromArray(arr)
+        img.SetSpacing(spacing)
+        img.SetOrigin(origin)
+        img.SetDirection(direction)
+        images.append(img)
+    return compute_metrics(*images, **kwargs)
+
+
+def compute_metrics_multilabel(
+    ref: Union[np.ndarray, sitk.Image],
+    pred: Union[np.ndarray, sitk.Image],
+    spacing: Union[tuple, list, np.ndarray] = None,
+    labels: Optional[Iterable[int]] = None,
+    taus: Iterable[float] = (),
+    percentiles: Iterable[float] = (100, 95),
+    metrics: Optional[Iterable[str]] = None,
+    verbose: bool = True,
+    n_jobs: int = 1,
+) -> Dict[int, Dict[str, Union[float, bool]]]:
+    """Compute metrics for every label of two label maps (e.g. multi-organ segmentations).
+
+    Each label is evaluated as a binary segmentation, as with `compute_metrics`. The bounding
+    boxes of all labels are found in a single pass over each label map, and each label is then
+    computed on a small crop, so this is much faster than thresholding the full label maps once
+    per label.
+
+    Args:
+        ref, pred: Label maps as SimpleITK images (same geometry), or numpy arrays (same shape;
+            `spacing` required, in the order of the array axes, as in `set_input`).
+        spacing: Pixel/voxel size, only for numpy inputs.
+        labels: Labels to evaluate. Defaults to all non-zero labels present in either map. A
+            label missing from one or both maps gets the values for empty masks.
+        taus, percentiles, metrics, verbose: See `compute_metrics`.
+        n_jobs: Number of parallel processes over labels (1: sequential).
+
+    Returns:
+        dict mapping each label to the result dict of `compute_metrics`.
+    """
+    if isinstance(ref, np.ndarray) or isinstance(pred, np.ndarray):
+        assert isinstance(ref, np.ndarray) and isinstance(
+            pred, np.ndarray
+        ), "if `ref` is a numpy array, `pred` must also be a numpy array and vice versa"
+        assert spacing is not None, "spacing must be provided for numpy inputs"
+        assert ref.shape == pred.shape, "label maps must have the same shape"
+        assert ref.ndim == len(spacing), "label maps and spacing must have the same dimensionality"
+        ref, pred = np2sitk(ref), np2sitk(pred)
+        ref.SetSpacing(tuple(float(s) for s in spacing))
+        pred.SetSpacing(tuple(float(s) for s in spacing))
+    else:
+        assert isinstance(ref, sitk.Image) and isinstance(
+            pred, sitk.Image
+        ), "label maps must be numpy arrays or SimpleITK images"
+        assert spacing is None, "spacing must not be provided for SimpleITK images"
+        assert ref.GetSize() == pred.GetSize(), "label map size must be the same"
+        assert np.allclose(ref.GetOrigin(), pred.GetOrigin()), "label map origin must be the same"
+        assert np.allclose(ref.GetSpacing(), pred.GetSpacing()), "label map spacing must be the same"
+        assert np.allclose(
+            ref.GetDirection(), pred.GetDirection()
+        ), "label map direction must be the same"
+
+    ref_boxes, pred_boxes = _label_bounding_boxes(ref), _label_bounding_boxes(pred)
+    if labels is None:
+        labels = sorted(set(ref_boxes) | set(pred_boxes))
+    labels = [int(label) for label in labels]
+
+    kwargs = dict(taus=tuple(taus), percentiles=tuple(percentiles), metrics=metrics, verbose=verbose)
+    size = np.array(ref.GetSize())
+    jobs = []
+    for label in labels:
+        boxes = [b for b in (ref_boxes.get(label), pred_boxes.get(label)) if b is not None]
+        if boxes:  # union of both boxes, plus one pixel/voxel
+            lo = np.maximum(np.min([b[0] for b in boxes], axis=0) - 1, 0)
+            hi = np.minimum(np.max([b[1] for b in boxes], axis=0) + 1, size - 1)
+        else:  # label in neither map: a single (empty) pixel/voxel
+            lo = hi = np.zeros(len(size), int)
+        roi_size, roi_index = (hi - lo + 1).tolist(), lo.tolist()
+        crops = [sitk.RegionOfInterest(img, roi_size, roi_index) for img in (ref, pred)]
+        masks = [sitk.GetArrayFromImage(c == label).astype(np.uint8) for c in crops]
+        jobs.append((*masks, crops[0].GetSpacing(), crops[0].GetOrigin(), crops[0].GetDirection(), kwargs))
+
+    if n_jobs == 1 or len(jobs) <= 1:
+        results = [_compute_metrics_for_label(job) for job in jobs]
+    else:
+        from concurrent.futures import ProcessPoolExecutor
+
+        with ProcessPoolExecutor(max_workers=n_jobs) as pool:
+            results = list(pool.map(_compute_metrics_for_label, jobs))
+    return dict(zip(labels, results))
+
+
 ## test
 if __name__ == "__main__":
     from .utils import create_synthetic_examples_2d
