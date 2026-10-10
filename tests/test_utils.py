@@ -18,6 +18,8 @@ from meshmetrics import (
 from meshmetrics.utils import (
     compute_distance_field,
     index2world,
+    mask_boundary_region,
+    mesh_distance_bounds,
     mesh_distance_lower_bound,
     vtk_compute_cell_sizes,
     vtk_2D_mask_surface,
@@ -419,3 +421,35 @@ def test_2D_segment_distances_match_reference(seed):
     # empty contour
     empty_d, empty_l = vtk_2D_centroid2surface_dist_length(vtk.vtkPolyData(), surface)
     assert empty_d.shape == empty_l.shape == (0,)
+
+
+@pytest.mark.parametrize("seed", range(3))
+@pytest.mark.parametrize("kind", ["mask", "mask_2d", "slot", "ellipsoid"])
+def test_mesh_distance_upper_bound(kind, seed):
+    mesh, mask = surface_and_mask(kind, seed)
+    exact = vtk_mask_distance_field(mask, mesh)
+    fg = sitk2np(mask) > 0
+    source = mesh if mask.GetDimension() == 3 else vtk_2D_meshing(mask)
+    for max_dist in [0.5, 1.0, 3.0]:
+        lower, upper = mesh_distance_bounds(source, mask, max_dist)
+        near = fg & (exact < max_dist)
+        assert np.all(lower[near] <= exact[near] + 1e-6)
+        assert np.all(upper[fg] >= exact[fg] - 1e-6)
+
+
+@pytest.mark.parametrize("kind", ["mask", "mask_2d", "slot", "ellipsoid"])
+def test_mask_boundary_region_matches_exact_field(kind):
+    """The region from the bounds equals thresholding the exact distance field, also when the
+    exact distances computed for one tau are reused for another."""
+    mesh, mask = surface_and_mask(kind, seed=5)
+    if mask.GetDimension() == 2:
+        source = vtk_2D_meshing(mask)
+        surface, full = vtk_2D_mask_surface(mask), vtk_mask_distance_field(mask)
+    else:
+        source = surface = mesh
+        full = vtk_mask_distance_field(mask, mesh)
+    fg = sitk2np(mask) > 0
+    exact = None
+    for tau in [2.5, 0.7, 1.3, 4.0]:
+        region, exact = mask_boundary_region(mask, tau, surface, bound_source=source, exact=exact)
+        assert np.array_equal(region, fg & (full < tau)), tau

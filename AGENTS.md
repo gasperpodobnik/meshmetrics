@@ -60,9 +60,11 @@ uv run pytest          # full test suite (about 1 min)
   mesh, for mixed inputs) plus one pixel/voxel, via `crop_to_foreground` /
   `crop_np_to_foreground`. Results do not depend on the image size; `ref_sitk` etc. hold the
   cropped masks.
-- **BIoU** is computed on the grid, with exact distances only near the boundary (a provable
-  lower bound selects the voxels). It raises `ValueError` when `tau` is too small for any
-  boundary voxel.
+- **BIoU** is computed on the grid. Provable lower and upper bounds on the distance
+  (`mesh_distance_bounds`) decide most voxels; exact distances are computed only for the thin
+  ring of voxels the bounds cannot decide (`mask_boundary_region`), so results equal
+  thresholding the exact distance field. It raises `ValueError` when `tau` is too small for
+  any boundary voxel.
 - Support Python ≥ 3.10 and VTK ≥ 9.2. VTK behaviour changes between versions, so do not rely
   on version-specific filters without testing them.
 

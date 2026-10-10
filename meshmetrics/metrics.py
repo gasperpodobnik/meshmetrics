@@ -15,6 +15,7 @@ from .utils import (
     vtk_measurements_2D,
     vtk_measurements_3D,
     vtk_mask_distance_field,
+    mask_boundary_region,
     vtk_contour_segments,
     _vtk_extrude_contour,
     vtk_voxelizer,
@@ -263,6 +264,8 @@ class DistanceMetrics:
                 setattr(self, f"_{name}_{kind}", None)
         # BIoU distance fields: (max_dist, ref_field, pred_field)
         self._dist_fields = None
+        # BIoU: exact distances computed so far, per mask (NaN where not computed)
+        self._exact_dists = {}
         for name, attr in vars(type(self)).items():
             if isinstance(attr, cached_property):
                 self.__dict__.pop(name, None)
@@ -514,6 +517,23 @@ class DistanceMetrics:
             self._dist_fields = (max_dist, *fields)
         return self._dist_fields[1:]
 
+    def _boundary_region(self, name: str, tau: float) -> np.ndarray:
+        """BIoU boundary region of the `name` mask: foreground voxels closer than `tau` to its
+        boundary. Exact distances are computed only where needed and cached across `tau`."""
+        if self.n_dim == 2:
+            i = ("ref", "pred").index(name)
+            bound_source, surface = self._contours_2d[i], self._surfaces_2d[i]
+        else:
+            surface = bound_source = getattr(self, f"{name}_vtk")
+        region, self._exact_dists[name] = mask_boundary_region(
+            getattr(self, f"{name}_sitk"),
+            tau,
+            surface,
+            bound_source=bound_source,
+            exact=self._exact_dists.get(name),
+        )
+        return region
+
     @property
     def img_dist_field(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Full (exact) distance fields; foreground voxels to their own surface."""
@@ -723,10 +743,7 @@ class DistanceMetrics:
                 warnings.warn("One of the masks is empty")
             return 0.0
         else:
-            ref_dist_field_np, pred_dist_field_np = self._dist_fields_within(tau)
-
-            ref_hollow = (ref_dist_field_np < tau) & self.ref_np.astype(bool)
-            pred_hollow = (pred_dist_field_np < tau) & self.pred_np.astype(bool)
+            ref_hollow, pred_hollow = (self._boundary_region(name, tau) for name in ("ref", "pred"))
 
             num = (ref_hollow & pred_hollow).sum()
             denom = (ref_hollow | pred_hollow).sum()

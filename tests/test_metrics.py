@@ -206,17 +206,18 @@ def test_narrow_band_biou_matches_full_field(kind):
     assert band == pytest.approx(expected)
 
 
-def test_narrow_band_cache_grows_with_tau():
+def test_biou_reuses_exact_distances():
     m = DistanceMetrics()
     m.set_input(to_image(A), to_image(B))
-    m.biou(2.0)
-    assert m._dist_fields[0] == 2.0
-    m.biou(1.0)  # reuses the cached band
-    assert m._dist_fields[0] == 2.0
-    m.biou(3.0)
-    assert m._dist_fields[0] == 3.0
+    first = m.biou(2.0)
+    computed = {name: int(np.isfinite(d).sum()) for name, d in m._exact_dists.items()}
+    assert set(computed) == {"ref", "pred"}
+    assert m.biou(2.0) == first  # same tau: nothing new to compute
+    assert {name: int(np.isfinite(d).sum()) for name, d in m._exact_dists.items()} == computed
+    m.biou(3.0)  # larger tau: extends the cached exact distances
+    assert all(np.isfinite(m._exact_dists[n]).sum() >= computed[n] for n in computed)
     m.set_input(to_image(A), to_image(A))
-    assert m._dist_fields is None
+    assert m._exact_dists == {}
 
 
 def test_biou_raises_for_too_small_tau():

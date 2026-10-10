@@ -442,39 +442,40 @@ def compute_distance_field(pts_np: np.ndarray, mesh_vtk: vtk.vtkPolyData) -> np.
     return np.abs(vtk_to_numpy(dists))
 
 
-def mesh_distance_lower_bound(
+def mesh_distance_bounds(
     surface: vtk.vtkPolyData, meta_sitk: sitk.Image, max_dist: float
-) -> np.ndarray:
-    """Lower bound on the distance from each voxel centre of `meta_sitk` to `surface`.
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Lower and upper bounds on the distance from each voxel centre of `meta_sitk` to `surface`.
 
-    Valid for any surface, or for a 2D contour (line segments in the z=0 plane). Every
-    surface point is within ``L`` of a mesh vertex: for a contour, ``L`` is half the longest
-    segment; for a surface, ``L`` is the longest triangle edge divided by sqrt(3) (every point
-    of a triangle lies within that distance of one of its vertices; equality for equilateral
-    triangles).
-    Each vertex is snapped to its nearest voxel centre (moving it by at most half a voxel
-    diagonal), and a Euclidean distance transform gives the distance from every voxel centre
-    to the nearest snapped vertex. Hence::
+    Valid for any surface, or for a 2D contour (line segments in the z=0 plane). Only the
+    vertices of the cells are used. Every surface point is within ``L`` of a vertex: for a
+    contour, ``L`` is half the longest segment; for a surface, ``L`` is the longest triangle
+    edge divided by sqrt(3) (every point of a triangle lies within that distance of one of its
+    vertices; equality for equilateral triangles). Each vertex is snapped to its nearest voxel
+    centre (moving it by at most half a voxel diagonal), and a Euclidean distance transform
+    (EDT) gives the distance from every voxel centre to the nearest snapped vertex. Hence::
 
-        exact distance >= EDT - voxel_diagonal / 2 - L
+        EDT - voxel_diagonal / 2 - L  <=  exact distance  <=  EDT + voxel_diagonal / 2
 
-    Surface points farther than ``max_dist`` from the image grid are ignored, so the bound
-    is only meaningful for deciding whether a distance is below ``max_dist``. For 2D images,
-    the bound refers to in-plane (x, y) distances. Returned in ``sitk2np`` axis order.
+    (the upper bound is the distance to an actual vertex, which lies on the surface).
+    Vertices farther than ``max_dist`` from the image grid are ignored, so the bounds are only
+    meaningful for deciding whether a distance is below ``max_dist``. For 2D images, the bounds
+    refer to in-plane (x, y) distances. Returned in ``sitk2np`` axis order.
     """
     ndim = meta_sitk.GetDimension()
     spacing = np.array(meta_sitk.GetSpacing())
     origin = np.array(meta_sitk.GetOrigin())
     direction = np.array(meta_sitk.GetDirection()).reshape(ndim, ndim)
     size = np.array(meta_sitk.GetSize())
+    unbounded = (np.full(size, np.inf), np.full(size, np.inf))
     if surface.GetNumberOfCells() == 0:
-        return np.full(size, np.inf)
+        return unbounded
 
     if surface.GetNumberOfPolys() == 0 and surface.GetNumberOfLines() > 0:
         # contour: every point of a segment is within half its length of an endpoint
         pts = vtk_to_numpy(surface.GetPoints().GetData()).astype(float)
-        segments = vtk_to_numpy(surface.GetLines().GetConnectivityArray()).reshape(-1, 2)
-        sample_error = np.linalg.norm(pts[segments[:, 1]] - pts[segments[:, 0]], axis=1).max() / 2
+        cells = vtk_to_numpy(surface.GetLines().GetConnectivityArray()).reshape(-1, 2)
+        sample_error = np.linalg.norm(pts[cells[:, 1]] - pts[cells[:, 0]], axis=1).max() / 2
     else:
         # surface: every point of a triangle is within (longest edge) / sqrt(3) of a vertex
         triangulate = vtk.vtkTriangleFilter()  # only splits polygons into triangles
@@ -484,11 +485,12 @@ def mesh_distance_lower_bound(
         triangulate.Update()
         tri_mesh = triangulate.GetOutput()
         pts = vtk_to_numpy(tri_mesh.GetPoints().GetData()).astype(float)
-        tris = vtk_to_numpy(tri_mesh.GetPolys().GetConnectivityArray()).reshape(-1, 3)
-        edges = pts[tris] - pts[np.roll(tris, -1, axis=1)]
+        cells = vtk_to_numpy(tri_mesh.GetPolys().GetConnectivityArray()).reshape(-1, 3)
+        edges = pts[cells] - pts[np.roll(cells, -1, axis=1)]
         sample_error = np.linalg.norm(edges, axis=2).max() / np.sqrt(3)
-    pts = pts[:, :ndim]
-    margin = np.linalg.norm(spacing) / 2 + sample_error
+    # only vertices that belong to a cell lie on the surface (needed for the upper bound)
+    pts = pts[np.unique(cells)][:, :ndim]
+    half_diagonal = np.linalg.norm(spacing) / 2
 
     # world -> nearest voxel index on a grid padded by `pad` voxels; vertices outside the
     # padded grid are farther than max_dist from every voxel centre of the image
@@ -497,7 +499,7 @@ def mesh_distance_lower_bound(
     padded_size = size + 2 * pad
     idx = idx[np.all((idx >= 0) & (idx < padded_size), axis=1)]
     if len(idx) == 0:
-        return np.full(size, np.inf)
+        return unbounded
 
     marked = np.zeros(padded_size[::-1], np.uint8)  # SimpleITK array order
     marked[tuple(idx[:, ::-1].T)] = 1
@@ -506,8 +508,67 @@ def mesh_distance_lower_bound(
     edt = sitk.SignedMaurerDistanceMap(
         marked_sitk, insideIsPositive=False, squaredDistance=False, useImageSpacing=True
     )
-    edt_np = np.maximum(sitk2np(edt), 0)[(slice(pad, -pad),) * ndim]
-    return edt_np - margin
+    edt_np = np.maximum(sitk2np(edt), 0)[(slice(pad, -pad),) * ndim].astype(float)
+    rounding = 1e-6 * (edt_np + half_diagonal)  # the EDT is computed in single precision
+    lower = edt_np - half_diagonal - sample_error - rounding
+    upper = edt_np + half_diagonal + rounding
+    return lower, upper
+
+
+def mesh_distance_lower_bound(
+    surface: vtk.vtkPolyData, meta_sitk: sitk.Image, max_dist: float
+) -> np.ndarray:
+    """Lower bound on the distance from each voxel centre of `meta_sitk` to `surface` (see
+    `mesh_distance_bounds`)."""
+    return mesh_distance_bounds(surface, meta_sitk, max_dist)[0]
+
+
+def mask_boundary_region(
+    mask_sitk: sitk.Image,
+    tau: float,
+    surface: vtk.vtkPolyData,
+    bound_source: vtk.vtkPolyData = None,
+    exact: np.ndarray = None,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Foreground voxels whose centre lies closer than `tau` to `surface` (the BIoU boundary
+    region), computing exact distances only where the bounds cannot decide.
+
+    Voxels with an upper bound below `tau` are inside and voxels with a lower bound of at least
+    `tau` are outside the region (see `mesh_distance_bounds`); only the voxels in between get an
+    exact distance, so the result equals thresholding the exact distance field.
+
+    Args:
+        mask_sitk: Binary mask.
+        tau: Distance tolerance.
+        surface: Surface to measure the distances to (for 2D masks: the extruded contour).
+        bound_source: Mesh used for the bounds (for 2D masks: the contour); default `surface`.
+        exact: Exact distances computed earlier for the same mask and surface (NaN where not
+            computed), reused and extended.
+
+    Returns:
+        (region, exact): boolean region and the updated exact distances, in ``sitk2np`` order.
+    """
+    ndim = mask_sitk.GetDimension()
+    fg = sitk2np(mask_sitk) > 0
+    if exact is None:
+        exact = np.full(fg.shape, np.nan, np.float32)
+    lower, upper = mesh_distance_bounds(surface if bound_source is None else bound_source, mask_sitk, tau)
+
+    region = fg & (upper < tau)
+    uncertain = fg & ~region & (lower < tau)
+    todo = uncertain & np.isnan(exact)
+    if todo.any():
+        pts = index2world(
+            np.argwhere(todo),
+            np.array(mask_sitk.GetSpacing()),
+            np.array(mask_sitk.GetOrigin()),
+            np.array(mask_sitk.GetDirection()).reshape(ndim, ndim),
+        )
+        if ndim == 2:
+            pts = np.concatenate([pts, np.zeros((len(pts), 1))], axis=1)
+        exact[todo] = compute_distance_field(pts, surface)
+    region |= uncertain & (exact < tau)
+    return region, exact
 
 
 def vtk_mask_distance_field(
